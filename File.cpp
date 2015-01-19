@@ -1,13 +1,14 @@
 #include <FileSystem.h>
 
+File::~File() {
+	flush();
+}
+
 File::File(FileSystem *fs, uint32_t parent, uint32_t child) {
 	_fs = fs;
 	_parent = parent;
 	_inode = child;	
-	Serial.print("New file: ");
-	Serial.print(parent);
-	Serial.print("/");
-	Serial.println(child);
+
 	_size = _fs->getInodeSize(_parent, _inode);
 	_position = 0;
 	_posInode = _inode;
@@ -49,4 +50,8 @@ size_t File::readBytes(char *buffer, size_t len) {
 		totalRead += numRead;
 	}
 	return totalRead;
+}
+
+void File::flush() { 
+	_fs->sync();
 }

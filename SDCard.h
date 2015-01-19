@@ -11,7 +11,7 @@
 // Number of entries in the cache
 // Minimum 1 (reeeeealy slow) - Maximum depends on memory of chip.
 // Each entry is 528 bytes in size
-#define SD_CACHE_SIZE 100
+#define SD_CACHE_SIZE 10
 
 // How fast to run the SPI port
 #define SD_SPI_SPEED 20000000UL
@@ -66,9 +66,7 @@ private:
 	int			_cardType;
 	size_t 		_sectors;
 
-	uint8_t		_cacheMode;
 	
-	struct partition _partitions[4];
 	
 	void 		initializeSPIInterface();
 	void 		spiSend(uint8_t);
@@ -84,7 +82,7 @@ private:
 	bool 		waitReady(int limit);
 	int 		command(uint32_t cmd, uint32_t addr);
 
-	struct cache _cache[SD_CACHE_SIZE];
+
 	
 public:
 				SDCard(DSPI &spi, int cs);
@@ -93,14 +91,7 @@ public:
 	bool 		initialize();
 	bool 		eject();
 	bool 		insert();
-	void 		sync();
-	bool 		readBlock(uint32_t blockno, uint8_t *data);
-	bool 		writeBlock(uint32_t blockno, uint8_t *data);
-	bool 		readRelativeBlock(uint8_t partition, uint32_t blockno, uint8_t *data);
-	bool 		writeRelativeBlock(uint8_t partition, uint32_t blockno, uint8_t *data);
-
-	void 		setCacheMode(uint8_t mode);
-
+	
 	size_t 	getCapacity();
 };
 

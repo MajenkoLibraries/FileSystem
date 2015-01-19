@@ -6,6 +6,7 @@ Fat::Fat(BlockDevice &dev, uint8_t partition) {
 	_part = partition & 0x03;
 	_type = 0;
 	_cwd = 0;
+	_cachedFatNumber = 0xFFFFFFFFUL;
 }
 
 bool Fat::begin() {
@@ -23,13 +24,10 @@ bool Fat::begin() {
 	}
 
 	if (!strncmp((const char *)bb->ident, "FAT16", 5)) {
-		Serial.println("It's fat16");
 		_type = 16;
 	} else 	if (!strncmp((const char *)bb->ident, "FAT32", 5)) {
-		Serial.println("It's fat32");
 		_type = 32;
 	} else {
-		Serial.println("It's not identified");
 		errno = -20; //EINVAL;
 		return false;
 	}
@@ -44,12 +42,6 @@ uint32_t Fat::findDirectoryEntry(uint32_t parent, const char *path) {
 	uint8_t block[512];
 	uint32_t offset = 0;
 
-	Serial.print("findDirectoryEntry(");
-	Serial.print(parent);
-	Serial.print(", ");
-	Serial.print(path);
-	Serial.println(");");
-	
 	if (parent == 0) {
 		offset = _root_block;
 	} else {
@@ -57,6 +49,7 @@ uint32_t Fat::findDirectoryEntry(uint32_t parent, const char *path) {
 	}
 
 	char lfn[256];
+	bzero(lfn, 256);
 	bool has_lfn = false;
 	bool done = false;
 	while (!done) {
@@ -117,8 +110,7 @@ uint32_t Fat::findDirectoryEntry(uint32_t parent, const char *path) {
 uint32_t Fat::getInode(uint32_t parent, const char *path, uint32_t *ancestor) {
 	char *parts[MAX_DEPTH];
 	int len = FileSystem::parsePath(path, parts);
-	Serial.print("Path length: ");
-	Serial.println(len);
+
 	if (len == 1) {
 		free(parts[0]);
 		if (ancestor != NULL) {
@@ -154,16 +146,18 @@ uint32_t Fat::getNextInode(uint32_t inode) {
 	uint32_t block = inode / inodesPerBlock;
 	uint32_t inner = inode % inodesPerBlock;
 	
-	uint8_t data[512];
-
-	if (!_dev->readRelativeBlock(_part, 1 + block, data)) {
-		return 0;
+	if (_cachedFatNumber != (1+block)) {
+		if (!_dev->readRelativeBlock(_part, 1 + block, _cachedFat)) {
+			_cachedFatNumber = 0xFFFFFFFFUL;
+			return 0;
+		}
+		_cachedFatNumber = (1+block);
 	}
 	uint32_t nextInode = 0;
 	if (_type == 32) {
-		nextInode = data[(inner * 4)] | (data[(inner * 4)+1] << 8) | (data[(inner * 4)+2] << 16) | (data[(inner * 4)+3] << 24);
+		nextInode = _cachedFat[(inner * 4)] | (_cachedFat[(inner * 4)+1] << 8) | (_cachedFat[(inner * 4)+2] << 16) | (_cachedFat[(inner * 4)+3] << 24);
 	} else {
-		nextInode = data[(inner * 2)] | (data[(inner * 2)+1] << 8);
+		nextInode = _cachedFat[(inner * 2)] | (_cachedFat[(inner * 2)+1] << 8);
 	}
 	return nextInode;
 }
@@ -173,8 +167,6 @@ File Fat::open(const char *filename) {
 	uint32_t parent;
 
 	inode = getInode(_cwd, filename, &parent);
-	Serial.print("Open file inode: ");
-	Serial.println(inode);
 	return File(this, parent, inode);
 }
 
@@ -183,10 +175,8 @@ uint32_t Fat::getInodeSize(uint32_t parent, uint32_t child) {
 	uint32_t offset = 0;
 	if (parent == 0) {
 		offset = _root_block;
-		Serial.println("File is in root folder");
 	} else {
 		offset = _data_start + ((parent - 2) * _cluster_size);
-		Serial.println("File is in sub folder");
 	}
 
 	bool done = false;
@@ -216,7 +206,6 @@ uint32_t Fat::getInodeSize(uint32_t parent, uint32_t child) {
 		}
 		offset++;
 	}	
-	Serial.println("Not found?!");
 	return 0;	
 }
 
@@ -262,16 +251,11 @@ uint32_t Fat::readFileBytes(uint32_t start, uint32_t offset, uint8_t *buffer, ui
 
 	uint32_t inode = start;
 
-	uint32_t ts_start = millis();
 	for (uint32_t j = 0; j < clusterNumber; j++) {
 		inode = getNextInode(inode);
 	}
 	uint32_t currentCluster = clusterNumber;
-	uint32_t ts_end = millis();
-	Serial.print("Get Next Cluster loop took ");
-	Serial.print(ts_end - ts_start);
-	Serial.println("ms");
-	
+
 	for (uint32_t i = 0; i < len; i++) {
 		clusterNumber = (offset + i) / (_cluster_size * 512);
 		clusterOffset = (offset + i) % (_cluster_size * 512);

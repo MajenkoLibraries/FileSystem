@@ -97,13 +97,14 @@ struct bootblock {
 
 class Fat : public FileSystem {
 private:
-	BlockDevice 	*_dev;
+//	BlockDevice 	*_dev;
 	uint8_t 		_part;
 	uint8_t 		_type;
 
 	uint32_t 		findDirectoryEntry(uint32_t parent, const char *path);
 	uint32_t		_cwd;
-
+	uint8_t			_cachedFat[512];
+	uint32_t		_cachedFatNumber;
 public:
 	uint32_t 		_root_block;
 	uint32_t		_cluster_size;
