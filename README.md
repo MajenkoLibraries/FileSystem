@@ -84,3 +84,30 @@ than the traditional SD library:
      9    712903  01         6  50
      0    712968  01         5  13
      4    712969  01         5  13
+
+Even single byte sequential reads are quite nippy, thanks to the multi-layer
+cache system:
+
+
+    Single byte read:
+    
+    File size: 104857600
+    Read time: 206792ms
+    Read speed: 507067.97 Bps
+
+    Cache hits: 3
+    Cache misses: 1621
+    Cache percent: 0%
+
+    Cache data:
+    ID     Block  Flags  Count  Time
+     2       650  01         2  206806
+     1       137  01         1  207087
+     0    712714  01         0  338
+     3    712842  01         0  207
+     4    712970  01         0  77
+     5    712074  01         0  988
+     6    712202  01         0  858
+     7    712330  01         0  728
+     8    712458  01         0  598
+     9    712586  01         0  468
