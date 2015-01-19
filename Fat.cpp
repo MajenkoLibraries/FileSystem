@@ -105,6 +105,7 @@ uint32_t Fat::findDirectoryEntry(uint32_t parent, const char *path) {
 		}
 		offset++;
 	}	
+	errno = ENOENT;
 	return 0;	
 }
 
@@ -167,8 +168,12 @@ File Fat::open(const char *filename) {
 	uint32_t inode;
 	uint32_t parent;
 
-	inode = getInode(_cwd, filename, &parent);
-	return File(this, parent, inode);
+	if (filename[0] == '/') {
+		inode = getInode(0, filename+1, &parent);
+	} else {
+		inode = getInode(_cwd, filename+1, &parent);		
+	}
+	return File(this, parent, inode, inode == 0 ? false : true);
 }
 
 uint32_t Fat::getInodeSize(uint32_t parent, uint32_t child) {

@@ -237,6 +237,7 @@ public:
 	FileSystem 	*_fs;
 	uint32_t 	_size;
 	uint32_t 	_posInode;
+	bool		_isValid;
 
 public:
 	// Stream interface functions
@@ -248,8 +249,9 @@ public:
 	int		peek() { return 0; }
 	void	flush();
 
+	operator bool();
 	// Constructors
-	File(FileSystem *fs, uint32_t parent, uint32_t child);
+	File(FileSystem *fs, uint32_t parent, uint32_t child, bool);
 	~File();
 
 };

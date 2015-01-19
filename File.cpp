@@ -4,7 +4,7 @@ File::~File() {
 	flush();
 }
 
-File::File(FileSystem *fs, uint32_t parent, uint32_t child) {
+File::File(FileSystem *fs, uint32_t parent, uint32_t child, bool isValid) {
 	_fs = fs;
 	_parent = parent;
 	_inode = child;	
@@ -12,6 +12,7 @@ File::File(FileSystem *fs, uint32_t parent, uint32_t child) {
 	_size = _fs->getInodeSize(_parent, _inode);
 	_position = 0;
 	_posInode = _inode;
+	_isValid = isValid;
 }
 
 int File::read() {
@@ -54,4 +55,8 @@ size_t File::readBytes(char *buffer, size_t len) {
 
 void File::flush() { 
 	_fs->sync();
+}
+
+File::operator bool() {
+	return _isValid;
 }
