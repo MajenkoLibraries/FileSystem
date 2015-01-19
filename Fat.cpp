@@ -7,6 +7,7 @@ Fat::Fat(BlockDevice &dev, uint8_t partition) {
 	_type = 0;
 	_cwd = 0;
 	_cachedFatNumber = 0xFFFFFFFFUL;
+	_cachedBlockNumber = 0xFFFFFFFFUL;
 }
 
 bool Fat::begin() {
@@ -220,20 +221,27 @@ int Fat::readFileByte(uint32_t start, uint32_t offset) {
 		inode = getNextInode(inode);
 	}
 
-	uint8_t data[512];
+	uint32_t block = (inode - 2) * _cluster_size + clusterBlock + _data_start;
 
-	_dev->readRelativeBlock(_part, (inode - 2) * _cluster_size + clusterBlock + _data_start, data);
-	return data[blockOffset];
+	if (block != _cachedBlockNumber) {
+		_dev->readRelativeBlock(_part, block, _cachedBlock);
+		_cachedBlockNumber = block;
+		
+	}
+
+	return _cachedBlock[blockOffset];
 }
 
 int Fat::readClusterByte(uint32_t inode, uint32_t offset) {
 	uint32_t clusterBlock = offset / 512;
 	uint32_t blockOffset = offset % 512;
 
-	uint8_t data[512];
-
-	_dev->readRelativeBlock(_part, (inode - 2) * _cluster_size + clusterBlock + _data_start, data);
-	return data[blockOffset];
+	uint32_t block = (inode - 2) * _cluster_size + clusterBlock + _data_start;
+	if (block != _cachedBlockNumber) {	
+		_dev->readRelativeBlock(_part, block, _cachedBlock);
+		_cachedBlockNumber = block;
+	}
+	return _cachedBlock[blockOffset];
 }
 
 uint32_t Fat::readFileBytes(uint32_t start, uint32_t offset, uint8_t *buffer, uint32_t len) {
@@ -287,7 +295,6 @@ uint32_t Fat::readFileBytes(uint32_t start, uint32_t offset, uint8_t *buffer, ui
 uint32_t Fat::readClusterBytes(uint32_t inode, uint32_t offset, uint8_t *buffer, uint32_t len) {
 
 	uint32_t currentBlock = 0xFFFFFFFFUL;
-	uint8_t data[512];
 	uint32_t numRead = 0;
 	
 	for (uint32_t i = 0; i < len; i++) {
@@ -298,13 +305,15 @@ uint32_t Fat::readClusterBytes(uint32_t inode, uint32_t offset, uint8_t *buffer,
 			currentBlock = clusterBlock;
 
 			uint32_t thisBlock = (inode - 2) * _cluster_size + clusterBlock + _data_start;
-
-			if (!_dev->readRelativeBlock(_part, thisBlock, data)) {
-				break;
+			if (thisBlock != _cachedBlockNumber) {
+				if (!_dev->readRelativeBlock(_part, thisBlock, _cachedBlock)) {
+					break;
+				}
+				_cachedBlockNumber = thisBlock;
 			}
 		}
 		numRead++;
-		buffer[i] = data[blockOffset];
+		buffer[i] = _cachedBlock[blockOffset];
 	}
 
 	return numRead;

@@ -114,7 +114,6 @@ struct mbr {
 
 struct cache {
 	uint32_t blockno;
-	uint32_t last_micros;
 	uint32_t last_millis;
 	uint32_t hit_count;
 	uint32_t flags;

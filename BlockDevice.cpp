@@ -38,7 +38,6 @@ bool BlockDevice::readBlock(uint32_t block, uint8_t *data) {
 		if (_cache[i].flags & CACHE_VALID) {
 			if (_cache[i].blockno == block) {
 				memcpy(data, _cache[i].data, 512);
-				_cache[i].last_micros = micros() % 1000;
 				_cache[i].last_millis = millis();
 				_cache[i].hit_count++;
 				_cacheHit++;
@@ -58,7 +57,6 @@ bool BlockDevice::readBlock(uint32_t block, uint8_t *data) {
 			}
 
 			_cache[i].blockno = block;
-			_cache[i].last_micros = micros() % 1000;
 			_cache[i].last_millis = millis();
 			_cache[i].flags = CACHE_VALID;
 			_cache[i].hit_count = 0;
@@ -80,7 +78,6 @@ bool BlockDevice::readBlock(uint32_t block, uint8_t *data) {
 	}
 
 	_cache[max_entry].blockno = block;
-	_cache[max_entry].last_micros = micros() % 1000;
 	_cache[max_entry].last_millis = millis();
 	_cache[max_entry].flags = CACHE_VALID;
 	_cache[max_entry].hit_count = 0;
@@ -95,7 +92,6 @@ bool BlockDevice::writeBlock(uint32_t block, uint8_t *data) {
 			if (_cache[i].blockno == block) {
 				memcpy(_cache[i].data, data, 512);
 				_cache[i].flags |= CACHE_DIRTY;
-				_cache[i].last_micros = micros() % 1000;
 				_cache[i].last_millis = millis();
 				_cache[i].hit_count++;
 
@@ -120,7 +116,6 @@ bool BlockDevice::writeBlock(uint32_t block, uint8_t *data) {
 		if (!(_cache[i].flags & CACHE_VALID)) {
 			_cache[i].blockno = block;
 			_cache[i].flags = CACHE_VALID | CACHE_DIRTY;
-			_cache[i].last_micros = micros() % 1000;
 			_cache[i].last_millis = millis();
 			_cache[i].hit_count = 0;
 			memcpy(_cache[i].data, data, 512);
@@ -145,7 +140,6 @@ bool BlockDevice::writeBlock(uint32_t block, uint8_t *data) {
 	}
 
 	_cache[max_entry].blockno = block;
-	_cache[max_entry].last_micros = micros() % 1000;
 	_cache[max_entry].last_millis = millis();
 	_cache[max_entry].flags = CACHE_VALID | CACHE_DIRTY;
 	_cache[max_entry].hit_count = 0;
@@ -183,15 +177,14 @@ uint32_t BlockDevice::findExpirableEntry() {
 		}
 	}
 
-	uint64_t now = millis() * 1000 + (micros() % 1000);
-
+	uint32_t now = millis();
+	
 	// Now scan through and find the one with that count that is oldest.
 	for (int i = 0; i < SD_CACHE_SIZE; i++) {
 		if (_cache[i].hit_count == leastUsedCount) {
-			uint64_t then = _cache[i].last_millis * 1000 + (_cache[i].last_micros);
 
-			if (now - then > oldestUsedTime) {
-				oldestUsedTime = now - then;
+			if (now - _cache[i].last_millis > oldestUsedTime) {
+				oldestUsedTime = now - _cache[i].last_millis;
 				oldestUsedID = i;
 			}
 		}
@@ -218,8 +211,8 @@ void BlockDevice::printCacheStats() {
 	Serial.println();
 
 	Serial.println("Cache data:");
-	Serial.println("ID  Block     Flags  Count  Time");
-	char temp[200];
+	Serial.println("ID     Block  Flags  Count  Time");
+	char temp[80];
 	uint32_t max_hit = 0;
 
 	for (int i = 0; i < SD_CACHE_SIZE; i++) {
@@ -228,16 +221,17 @@ void BlockDevice::printCacheStats() {
 		}
 	}
 
+	uint32_t now = millis();
+
 	for (int hit = max_hit; hit >= 0; hit--) {
 		for (int i = 0; i < SD_CACHE_SIZE; i++) {
 			if (_cache[i].hit_count == (uint32_t)hit) {
-				sprintf(temp, "%2d  %8lu  %02x     %5lu  %lu.%lu",
+				sprintf(temp, "%2d  %8lu  %02x     %5lu  %lu",
 				        i,
 				        _cache[i].blockno,
 				        (unsigned int)_cache[i].flags,
 				        _cache[i].hit_count,
-				        _cache[i].last_millis,
-				        _cache[i].last_micros
+				        (now - _cache[i].last_millis)
 				       );
 				Serial.println(temp);
 			}

@@ -105,6 +105,9 @@ private:
 	uint32_t		_cwd;
 	uint8_t			_cachedFat[512];
 	uint32_t		_cachedFatNumber;
+	uint8_t			_cachedBlock[512];
+	uint32_t		_cachedBlockNumber;
+	
 public:
 	uint32_t 		_root_block;
 	uint32_t		_cluster_size;
