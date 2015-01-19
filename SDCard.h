@@ -6,8 +6,17 @@
 #define _SDCARD_H
 
 #include <FileSystem.h>
-
 #include <DSPI.h>
+
+// Number of entries in the cache
+// Minimum 1 (reeeeealy slow) - Maximum depends on memory of chip.
+// Each entry is 528 bytes in size
+#define SD_CACHE_SIZE 100
+
+// How fast to run the SPI port
+#define SD_SPI_SPEED 20000000UL
+
+
 
 // SD Card Commands
 
@@ -57,6 +66,8 @@ private:
 	int			_cardType;
 	size_t 		_sectors;
 
+	uint8_t		_cacheMode;
+	
 	struct partition _partitions[4];
 	
 	void 		initializeSPIInterface();
@@ -66,9 +77,14 @@ private:
 	void		setFastSPI();
 	void		deselectCard();
 	void		selectCard();
+
+	bool		readBlockFromDisk(uint32_t blockno, uint8_t *data);
+	bool		writeBlockToDisk(uint32_t blockno, uint8_t *data);
 	
 	bool 		waitReady(int limit);
 	int 		command(uint32_t cmd, uint32_t addr);
+
+	struct cache _cache[SD_CACHE_SIZE];
 	
 public:
 				SDCard(DSPI &spi, int cs);
@@ -78,10 +94,12 @@ public:
 	bool 		eject();
 	bool 		insert();
 	void 		sync();
-	size_t 		readBlock(uint32_t blockno, uint8_t *data, uint32_t maxlen);
-	size_t 		writeBlock(uint32_t blockno, uint8_t *data, uint32_t maxlen);
-	size_t 		readRelativeBlock(uint8_t partition, uint32_t blockno, uint8_t *data, uint32_t maxlen);
-	size_t 		writeRelativeBlock(uint8_t partition, uint32_t blockno, uint8_t *data, uint32_t maxlen);
+	bool 		readBlock(uint32_t blockno, uint8_t *data);
+	bool 		writeBlock(uint32_t blockno, uint8_t *data);
+	bool 		readRelativeBlock(uint8_t partition, uint32_t blockno, uint8_t *data);
+	bool 		writeRelativeBlock(uint8_t partition, uint32_t blockno, uint8_t *data);
+
+	void 		setCacheMode(uint8_t mode);
 
 	size_t 	getCapacity();
 };

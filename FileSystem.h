@@ -94,6 +94,28 @@ struct mbr {
     uint16_t bootsig;
 }__attribute__((packed));
 
+
+// A cache block has valid data in it
+#define CACHE_VALID 	0x01
+// A cache block is dirty
+#define CACHE_DIRTY 	0x02
+// A cache block is locked in core
+#define CACHE_LOCKED 	0x04
+
+#define CACHE_WRITEBACK 	0x00
+#define CACHE_WRITETHROUGH 	0x01
+
+// Maximum directory depth when parsing a path
+#define MAX_DEPTH 20
+
+struct cache {
+	uint32_t blockno;
+	uint32_t last_micros;
+	uint32_t last_millis;
+	uint32_t flags;
+	uint8_t data[512];
+};
+
 /*!
   * The BlockDevice class is an interface class defining the methods used
   * to access a block device - reading blocks, writing blocks, and initializing
@@ -103,36 +125,20 @@ struct mbr {
 class BlockDevice {
 public:
 	/*! Read a single block of data.
-	 *
-	 * *maxlen* is the maximum amount of data to read into *data,
-	 * but it will never read past the end of the current block.
-	 * Returns the number of bytes actually read.
 	 */
-	virtual size_t readBlock(uint32_t blockno, uint8_t *data, uint32_t maxlen) = 0;
+	virtual bool readBlock(uint32_t blockno, uint8_t *data) = 0;
 
 	/*! Write a single block of data.
-	 *
-	 * *maxlen* is the maximum amount of data to write from *data,
-	 * but it will never write past the end of the current block.
-	 * Return sthe number of bytes actually written.
 	 */
-	virtual size_t writeBlock(uint32_t blockno, uint8_t *data, uint32_t maxlen) = 0;
+	virtual bool writeBlock(uint32_t blockno, uint8_t *data) = 0;
 
 	/*! Read a single block of data within a partition.
-	 *
-	 * *maxlen* is the maximum amount of data to read into *data,
-	 * but it will never read past the end of the current block.
-	 * Returns the number of bytes actually read.
 	 */
-	virtual size_t readRelativeBlock(uint8_t partition, uint32_t blockno, uint8_t *data, uint32_t maxlen) = 0;
+	virtual bool readRelativeBlock(uint8_t partition, uint32_t blockno, uint8_t *data) = 0;
 
 	/*! Write a single block of data within a partition.
-	 *
-	 * *maxlen* is the maximum amount of data to write from *data,
-	 * but it will never write past the end of the current block.
-	 * Return sthe number of bytes actually written.
 	 */
-	virtual size_t writeRelativeBlock(uint8_t partition, uint32_t blockno, uint8_t *data, uint32_t maxlen) = 0;
+	virtual bool writeRelativeBlock(uint8_t partition, uint32_t blockno, uint8_t *data) = 0;
 
 	/*! Initialize the device.
 	 *
@@ -168,6 +174,22 @@ public:
 	 * Returns the number of blocks on the device
 	 */
 	 virtual size_t getCapacity() = 0;
+
+	 /*! Set the cache mode. Select between CACHE_WRITEBACK and
+	  *  CACHE_WRITETHROUGH.
+	  *  
+	  *  Writeback caching only writes the data to the backing store
+	  *  when the cache block needs to be re-used, or when a manual
+	  *  sync() is called.  This is by far the fastest and kindest to
+	  *  the flash device, but risks losing data on premature ejection or
+	  *  power loss.
+	  *  
+	  *  Writethough however writes the data to the backing store as
+	  *  soon as it is placed in the cache.  Somewhat slower and causes
+	  *  more writes to the flash (which shortens its lifetime) but greatly
+	  *  reduces the chances of data loss
+	  */
+	  virtual void setCacheMode(uint8_t cacheMode) = 0;
 };
 
 /*! The FileSystem class is an interface class which defines the functions
@@ -175,32 +197,58 @@ public:
  *  for accessing files and directories.
  */
 
+class FileSystem;
+
+class File : public Stream {
+private:
+public:
+	uint32_t	_parent;
+	uint32_t	_inode;
+	uint32_t	_position;
+	FileSystem 	*_fs;
+	uint32_t 	_size;
+	uint32_t 	_posInode;
+public:
+	// Stream interface functions
+	int 	read();
+	size_t	readBytes(char *, size_t);
+	
+	void 	write(uint8_t c) { }
+	int		available() { return 0; }
+	int		peek() { return 0; }
+	void	flush() {}
+
+	// Constructors
+	File(FileSystem *fs, uint32_t parent, uint32_t child);
+
+};
+
+
 class FileSystem {
+private:
+	File	*_root;
+	
 public:
 	virtual bool begin() = 0;
 
-	virtual int open(const char *pathname, int flags) = 0;
-	virtual int open(const char *pathname, int flags, mode_t mode) = 0;
-	virtual int creat(const char *pathname, int flags, mode_t mode) = 0;
-	virtual int openat(int dirfd, const char *pathname, int flags) = 0;
-	virtual int openat(int dirfd, const char *pathname, int flags, mode_t mode) = 0;
+	virtual int parsePath(String const &path, char **parts) { return parsePath(path.c_str(), parts); }
+	virtual int parsePath(const char *path, char **parts);
 
-	virtual int close(int fd) = 0;
-	virtual size_t write(int fd, const void *buf, size_t count) = 0;
-	virtual size_t read(int fd, void *buf, size_t count) = 0;
+	virtual uint32_t		getInode(const char *path) { return getInode(0, path, NULL); }
+	virtual uint32_t 		getInode(uint32_t parent, const char *path) { return getInode(0, path, NULL); }
+	virtual uint32_t		getInode(uint32_t parent, const char *path, uint32_t *ancestor) = 0;
+	virtual uint32_t		getNextInode(uint32_t inode) = 0;
 
-	virtual int access(const char *pathname, int mode) = 0;
-	virtual int accessat(int dirfd, const char *pathname, int mode) = 0;
-	virtual int chdir(const char *path) = 0;
-	virtual int unlink(const char *pathname) = 0;
-	virtual int unlinkar(int dirfd, const char *pathname) = 0;
-	virtual int rmdir(const char *pathname) = 0;
-	virtual int rmdirat(int dirfd, const char *pathname) = 0;
-	virtual int mkdir(const char *pathname, mode_t mode) = 0;
-	virtual int mkdirat(int dirfd, const char *pathname, mode_t mode) = 0;
-	virtual int rename(const char *oldpath, const char *newpath) = 0;
-	virtual int renameat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath) = 0;
+	virtual File			open(const char *filename) = 0;
+	virtual uint32_t		getInodeSize(uint32_t parent, uint32_t child);
+	virtual int				readFileByte(uint32_t start, uint32_t offset);
+	virtual int				readClusterByte(uint32_t start, uint32_t offset);
+	virtual uint32_t		readFileBytes(uint32_t start, uint32_t offset, uint8_t *buffer, uint32_t len);
+	virtual uint32_t		readClusterBytes(uint32_t start, uint32_t offset, uint8_t *buffer, uint32_t len);
+	virtual uint32_t		getClusterSize() = 0;
+
 };
+
 
 #include <SDCard.h>
 #include <Fat.h>

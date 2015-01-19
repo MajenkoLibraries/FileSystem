@@ -117,7 +117,7 @@ void SDCard::setSlowSPI() {
 
 void SDCard::setFastSPI() {
 	if (_spi != NULL) {
-		_spi->setSpeed(10000000UL); // Todo: Make this a configurable variable
+		_spi->setSpeed(SD_SPI_SPEED); // Todo: Make this a configurable variable
 	}
 }
 
@@ -254,7 +254,7 @@ bool SDCard::insert() {
     		return false;
     }
 
-	if (readBlock(0, buffer, 512) != 512) {
+	if (!readBlock(0, buffer)) {
 		errno = EIO;
 		return false;
 	}
@@ -277,13 +277,86 @@ bool SDCard::eject() {
 }
 
 void SDCard::sync() {
+	for (int i = 0; i < SD_CACHE_SIZE; i++) {
+		if (_cache[i].flags & CACHE_VALID) {
+			if (_cache[i].flags & CACHE_DIRTY) {
+				if (writeBlockToDisk(_cache[i].blockno, _cache[i].data)) {
+					_cache[i].flags &= ~CACHE_DIRTY;
+				}
+			}
+		}
+	}
 	
 }
 
-size_t SDCard::readBlock(uint32_t block, uint8_t *data, uint32_t maxlen) {
+bool SDCard::readBlock(uint32_t block, uint8_t *data) {
+	// Is it in the cache already?
+	for (int i = 0; i < SD_CACHE_SIZE; i++) {
+		if (_cache[i].flags & CACHE_VALID) {
+			if (_cache[i].blockno == block) {
+				memcpy(data, _cache[i].data, 512);
+				_cache[i].last_micros = micros() % 1000;
+				_cache[i].last_millis = millis();
+				return true;
+			}
+		}
+	}
+
+	// Find an empty cache slot for the block
+	for (int i = 0; i < SD_CACHE_SIZE; i++) {
+		if (!(_cache[i].flags & CACHE_VALID)) {
+			if (!readBlockFromDisk(block, _cache[i].data)) {
+				return false;
+			}
+			_cache[i].blockno = block;
+			_cache[i].last_micros = micros() % 1000;
+			_cache[i].last_millis = millis();
+			_cache[i].flags = CACHE_VALID;
+			memcpy(data, _cache[i].data, 512);
+			return true;			
+		}
+	}
+
+	// No room = let's expire the oldest entry and use that.
+	uint32_t max_age = 0;
+	int max_entry = -1;
+
+	uint64_t now = millis() * 1000 + (micros() % 1000);
+
+	for (int i = 0; i < SD_CACHE_SIZE; i++) {
+		if (!(_cache[i].flags & CACHE_LOCKED)) {
+			uint64_t then = _cache[i].last_millis * 1000 + (_cache[i].last_micros);
+			if ((now - then) > max_age) {
+				max_age = now - then;
+				max_entry = i;
+			}
+		}
+	}
+
+	// Err... no oldest one found...?! Maybe they're all locked.
+	// So we'll just load it from disk and not cache it.
+	if (max_entry < 0) { 
+		return readBlockFromDisk(block, data);
+	}
+
+	// If the found block is dirty then flush it to disk
+	if (_cache[max_entry].flags & CACHE_DIRTY) {
+		writeBlockToDisk(_cache[max_entry].blockno, _cache[max_entry].data);
+	}
+	if (!readBlockFromDisk(block, _cache[max_entry].data)) {
+		return false;
+	}
+	_cache[max_entry].blockno = block;
+	_cache[max_entry].last_micros = micros() % 1000;
+	_cache[max_entry].last_millis = millis();
+	_cache[max_entry].flags = CACHE_VALID;
+	memcpy(data, _cache[max_entry].data, 512);
+	return true;
+}
+
+bool SDCard::readBlockFromDisk(uint32_t block, uint8_t *data) {
 	int reply;
 	int i;
-	size_t numread = 0;
 
 	selectCard();
 	if (_cardType != 3) {
@@ -293,7 +366,7 @@ size_t SDCard::readBlock(uint32_t block, uint8_t *data, uint32_t maxlen) {
 	if (reply != 0) {
 		deselectCard();
 		errno = EIO;
-		return 0;
+		return false;
 	}
 
 	for (i = 0; ; i++) {
@@ -304,16 +377,16 @@ size_t SDCard::readBlock(uint32_t block, uint8_t *data, uint32_t maxlen) {
 		if (i >= TIMO_READ) {
 			deselectCard();
 			errno = EIO;
-			return 0;
+			return false;
 		}
 	}
 
-	for (i = 0; i < min(maxlen, 512); i++) {
-		data[i] = spiReceive();
-		numread++;
-	}
-	for (; i < 512; i++) {
-		spiReceive();
+	if (_spi != NULL) {
+		_spi->transfer(512, 0xFF, data);
+	} else {
+		for (i = 0; i < 512; i++) {
+			data[i] = spiReceive();
+		}
 	}
 	spiReceive();
 	spiReceive();
@@ -321,20 +394,99 @@ size_t SDCard::readBlock(uint32_t block, uint8_t *data, uint32_t maxlen) {
 	command(CMD_STOP, 0);
 	deselectCard();
 	
-	return numread;
+	return true;
 }
 
-size_t SDCard::writeBlock(uint32_t block, uint8_t *data, uint32_t maxlen) {
+bool SDCard::writeBlock(uint32_t block, uint8_t *data) {
+	// First let's look for the block in the cache
+	for (int i = 0; i < SD_CACHE_SIZE; i++) {
+		if (_cache[i].flags & CACHE_VALID) {
+			if (_cache[i].blockno == block) {
+				memcpy(_cache[i].data, data, 512);
+				_cache[i].flags |= CACHE_DIRTY;
+				_cache[i].last_micros = micros() % 1000;
+				_cache[i].last_millis = millis();
+				if(_cacheMode == CACHE_WRITETHROUGH) {
+					if (!writeBlockToDisk(_cache[i].blockno, _cache[i].data)) {
+						return false;
+					}
+					_cache[i].flags &= ~CACHE_DIRTY;
+				}
+				return true;
+			}
+		}
+	}
 
+	// Not found in the cache, so let's find room for it
+	for (int i = 0; i < SD_CACHE_SIZE; i++) {
+		if (!(_cache[i].flags & CACHE_VALID)) {
+			_cache[i].blockno = block;
+			_cache[i].flags = CACHE_VALID | CACHE_DIRTY;
+			_cache[i].last_micros = micros() % 1000;
+			_cache[i].last_millis = millis();
+			memcpy(_cache[i].data, data, 512);
+			if(_cacheMode == CACHE_WRITETHROUGH) {
+				if (!writeBlockToDisk(_cache[i].blockno, _cache[i].data)) {
+					return false;
+				}
+				_cache[i].flags &= ~CACHE_DIRTY;
+			}
+			return true;			
+		}
+	}
+
+	// No room in the cache, so expire the oldest entry
+	uint32_t max_age = 0;
+	int max_entry = -1;
+
+	uint64_t now = millis() * 1000 + (micros() % 1000);
+
+	for (int i = 0; i < SD_CACHE_SIZE; i++) {
+		if (!(_cache[i].flags & CACHE_LOCKED)) {
+			uint64_t then = _cache[i].last_millis * 1000 + (_cache[i].last_micros);
+			if ((now - then) > max_age) {
+				max_age = now - then;
+				max_entry = i;
+			}
+		}
+	}
+
+	// Err... no oldest one found...?! Maybe they're all locked.
+	// So we'll just write it to disk and not cache it.
+	if (max_entry < 0) { 
+		return writeBlockToDisk(block, data);
+	}
+
+	// If the found block is dirty then flush it to disk
+	if (_cache[max_entry].flags & CACHE_DIRTY) {
+		writeBlockToDisk(_cache[max_entry].blockno, _cache[max_entry].data);
+	}
+	
+	_cache[max_entry].blockno = block;
+	_cache[max_entry].last_micros = micros() % 1000;
+	_cache[max_entry].last_millis = millis();
+	_cache[max_entry].flags = CACHE_VALID | CACHE_DIRTY;
+	memcpy(_cache[max_entry].data, data, 512);
+
+	if(_cacheMode == CACHE_WRITETHROUGH) {
+		if (!writeBlockToDisk(_cache[max_entry].blockno, _cache[max_entry].data)) {
+			return false;
+		}
+		_cache[max_entry].flags &= ~CACHE_DIRTY;
+	}
+	
+	return true;
+}
+
+bool SDCard::writeBlockToDisk(uint32_t block, uint8_t *data) {
     int reply, i;
-    int nwritten = 0;
 
 	selectCard();
 	command(CMD_APP, 0);
 	reply = command(CMD_SET_WBECNT, 1);
 	if (reply != 0) {
 		errno = EIO;
-		return 0;
+		return false;
 	}
 
     if (_cardType != 3) block <<= 9;
@@ -342,7 +494,7 @@ size_t SDCard::writeBlock(uint32_t block, uint8_t *data, uint32_t maxlen) {
     if (reply != 0)
     {
 		errno = EIO;
-		return 0;
+		return false;
     }
     deselectCard();
 
@@ -351,19 +503,19 @@ size_t SDCard::writeBlock(uint32_t block, uint8_t *data, uint32_t maxlen) {
 
 	spiSend(WRITE_MULTIPLE_TOKEN);
 
-	for (i = 0; i < min(maxlen, 512); i++) {
-		spiSend(data[i]);
-		nwritten ++;
-	}
-	for (; i < 512; i++) {
-		spiSend(0xFF);
+	if (_spi != NULL) {
+		_spi->transfer(512, data);
+	} else {
+		for (i = 0; i < 512; i++) {
+			spiSend(data[i]);
+		}
 	}
 	spiSend(0xFF);
 	spiSend(0xFF);
 	reply = spiReceive();
 	if ((reply & 0x1F) != 0x05) {
 		errno = EIO;
-		return 0;
+		return false;
 	}
 	waitReady(TIMO_WAIT_WDONE);
 	deselectCard();
@@ -372,38 +524,45 @@ size_t SDCard::writeBlock(uint32_t block, uint8_t *data, uint32_t maxlen) {
 	spiSend(STOP_TRAN_TOKEN);
 	waitReady(TIMO_WAIT_WIDLE);
 	deselectCard();
-	return nwritten;
+	return true;
 }
 
-size_t SDCard::readRelativeBlock(uint8_t partition, uint32_t block, uint8_t *data, uint32_t maxlen) {
+bool SDCard::readRelativeBlock(uint8_t partition, uint32_t block, uint8_t *data) {
 	uint32_t offset = _partitions[partition & 0x03].lbastart;
 	uint32_t size = _partitions[partition & 0x03].lbalength;
 
 	if (offset > _sectors) {
 		errno = EINVAL;
-		return 0;
+		return false;
 	}
 	if (block > size) {
 		errno = EINVAL;
-		return 0;
+		return false;
 	}
-	return readBlock(offset + block, data, maxlen);
+	return readBlock(offset + block, data);
 }
 
-size_t SDCard::writeRelativeBlock(uint8_t partition, uint32_t block, uint8_t *data, uint32_t maxlen) {
+bool SDCard::writeRelativeBlock(uint8_t partition, uint32_t block, uint8_t *data) {
 	uint8_t offset = _partitions[partition & 0x03].lbastart;
 	uint8_t size = _partitions[partition & 0x03].lbalength;
 	if (offset > _sectors) {
 		errno = EINVAL;
-		return 0;
+		return false;
 	}
 	if (block > size) {
 		errno = EINVAL;
-		return 0;
+		return false;
 	}
-	return writeBlock(offset + block, data, maxlen);
+	return writeBlock(offset + block, data);
 }
 
 size_t SDCard::getCapacity() {
 	return _sectors;
+}
+
+void SDCard::setCacheMode(uint8_t mode) {
+	_cacheMode = mode;
+	if (_cacheMode == CACHE_WRITETHROUGH) {
+		sync();
+	}
 }

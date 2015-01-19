@@ -101,6 +101,8 @@ private:
 	uint8_t 		_part;
 	uint8_t 		_type;
 
+	uint32_t 		findDirectoryEntry(uint32_t parent, const char *path);
+	uint32_t		_cwd;
 
 public:
 	uint32_t 		_root_block;
@@ -109,28 +111,21 @@ public:
 	
 	Fat(BlockDevice &dev, uint8_t partition);
 	bool begin();
+	uint32_t		getInode(const char *path) { return getInode(0, path, NULL); }
+	uint32_t 		getInode(uint32_t parent, const char *path) { return getInode(0, path, NULL); }
+	uint32_t 		getInode(uint32_t parent, const char *path, uint32_t *ancestor);
+	
+	uint32_t		getNextInode(uint32_t inode);
 
-	int open(const char *pathname, int flags);
-	int open(const char *pathname, int flags, mode_t mode);
-	int creat(const char *pathname, int flags, mode_t mode);
-	int openat(int dirfd, const char *pathname, int flags);
-	int openat(int dirfd, const char *pathname, int flags, mode_t mode);
+	File			open(const char *filename);
+	uint32_t		getInodeSize(uint32_t parent, uint32_t child);
 
-	int close(int fd);
-	size_t write(int fd, const void *buf, size_t count);
-	size_t read(int fd, void *buf, size_t count);
+	int				readFileByte(uint32_t start, uint32_t offset);
+	int				readClusterByte(uint32_t start, uint32_t offset);
+	uint32_t		readFileBytes(uint32_t start, uint32_t offset, uint8_t *buffer, uint32_t len);
+	uint32_t		readClusterBytes(uint32_t start, uint32_t offset, uint8_t *buffer, uint32_t len);
 
-	int access(const char *pathname, int mode);
-	int accessat(int dirfd, const char *pathname, int mode);
-	int chdir(const char *path);
-	int unlink(const char *pathname);
-	int unlinkar(int dirfd, const char *pathname);
-	int rmdir(const char *pathname);
-	int rmdirat(int dirfd, const char *pathname);
-	int mkdir(const char *pathname, mode_t mode);
-	int mkdirat(int dirfd, const char *pathname, mode_t mode);
-	int rename(const char *oldpath, const char *newpath);
-	int renameat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath);
+	uint32_t		getClusterSize() { return _cluster_size * 512; }
 };
 
 #endif
