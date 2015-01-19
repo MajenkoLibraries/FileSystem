@@ -1,21 +1,21 @@
 /*
  * Copyright (c) 2015, Majenko Technologies
  * All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without modification,
  * are permitted provided that the following conditions are met:
- * 
+ *
  * * Redistributions of source code must retain the above copyright notice, this
  *   list of conditions and the following disclaimer.
- * 
+ *
  * * Redistributions in binary form must reproduce the above copyright notice, this
  *   list of conditions and the following disclaimer in the documentation and/or
  *   other materials provided with the distribution.
- * 
+ *
  * * Neither the name of Majenko Technologies nor the names of its
  *   contributors may be used to endorse or promote products derived from
  *   this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
  * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -27,7 +27,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
- 
+
 #include <FileSystem.h>
 
 void BlockDevice::attachActivityLED(uint8_t pin) {
@@ -53,9 +53,13 @@ void BlockDevice::sync() {
 	for (int i = 0; i < CACHE_SIZE; i++) {
 		if (_cache[i].flags & CACHE_VALID) {
 			if (_cache[i].flags & CACHE_DIRTY) {
+				switchOnActivityLED();
+
 				if (writeBlockToDisk(_cache[i].blockno, _cache[i].data)) {
 					_cache[i].flags &= ~CACHE_DIRTY;
 				}
+
+				switchOffActivityLED();
 			}
 		}
 	}
@@ -81,11 +85,14 @@ bool BlockDevice::readBlock(uint32_t block, uint8_t *data) {
 	// Find an empty cache slot for the block
 	for (int i = 0; i < CACHE_SIZE; i++) {
 		if (!(_cache[i].flags & CACHE_VALID)) {
+			switchOnActivityLED();
 
 			if (!readBlockFromDisk(block, _cache[i].data)) {
+				switchOffActivityLED();
 				return false;
 			}
 
+			switchOffActivityLED();
 			_cache[i].blockno = block;
 			_cache[i].last_millis = millis();
 			_cache[i].flags = CACHE_VALID;
@@ -100,13 +107,19 @@ bool BlockDevice::readBlock(uint32_t block, uint8_t *data) {
 
 	// If the found block is dirty then flush it to disk
 	if (_cache[max_entry].flags & CACHE_DIRTY) {
+		switchOnActivityLED();
 		writeBlockToDisk(_cache[max_entry].blockno, _cache[max_entry].data);
+		switchOffActivityLED();
 	}
 
+	switchOnActivityLED();
+
 	if (!readBlockFromDisk(block, _cache[max_entry].data)) {
+		switchOffActivityLED();
 		return false;
 	}
 
+	switchOffActivityLED();
 	_cache[max_entry].blockno = block;
 	_cache[max_entry].last_millis = millis();
 	_cache[max_entry].flags = CACHE_VALID;
@@ -126,10 +139,14 @@ bool BlockDevice::writeBlock(uint32_t block, uint8_t *data) {
 				_cache[i].hit_count++;
 
 				if (_cacheMode == CACHE_WRITETHROUGH) {
+					switchOnActivityLED();
+
 					if (!writeBlockToDisk(_cache[i].blockno, _cache[i].data)) {
+						switchOffActivityLED();
 						return false;
 					}
 
+					switchOffActivityLED();
 					_cache[i].flags &= ~CACHE_DIRTY;
 				}
 
@@ -151,10 +168,14 @@ bool BlockDevice::writeBlock(uint32_t block, uint8_t *data) {
 			memcpy(_cache[i].data, data, 512);
 
 			if (_cacheMode == CACHE_WRITETHROUGH) {
+				switchOnActivityLED();
+
 				if (!writeBlockToDisk(_cache[i].blockno, _cache[i].data)) {
+					switchOffActivityLED();
 					return false;
 				}
 
+				switchOffActivityLED();
 				_cache[i].flags &= ~CACHE_DIRTY;
 			}
 
@@ -166,7 +187,9 @@ bool BlockDevice::writeBlock(uint32_t block, uint8_t *data) {
 
 	// If the found block is dirty then flush it to disk
 	if (_cache[max_entry].flags & CACHE_DIRTY) {
+		switchOnActivityLED();
 		writeBlockToDisk(_cache[max_entry].blockno, _cache[max_entry].data);
+		switchOffActivityLED();
 	}
 
 	_cache[max_entry].blockno = block;
@@ -176,10 +199,14 @@ bool BlockDevice::writeBlock(uint32_t block, uint8_t *data) {
 	memcpy(_cache[max_entry].data, data, 512);
 
 	if (_cacheMode == CACHE_WRITETHROUGH) {
+		switchOnActivityLED();
+
 		if (!writeBlockToDisk(_cache[max_entry].blockno, _cache[max_entry].data)) {
+			switchOffActivityLED();
 			return false;
 		}
 
+		switchOffActivityLED();
 		_cache[max_entry].flags &= ~CACHE_DIRTY;
 	}
 
@@ -208,11 +235,10 @@ uint32_t BlockDevice::findExpirableEntry() {
 	}
 
 	uint32_t now = millis();
-	
+
 	// Now scan through and find the one with that count that is oldest.
 	for (int i = 0; i < SD_CACHE_SIZE; i++) {
 		if (_cache[i].hit_count == leastUsedCount) {
-
 			if (now - _cache[i].last_millis > oldestUsedTime) {
 				oldestUsedTime = now - _cache[i].last_millis;
 				oldestUsedID = i;
@@ -230,7 +256,6 @@ uint32_t BlockDevice::findExpirableEntry() {
 }
 
 void BlockDevice::printCacheStats() {
-
 	Serial.print("Cache hits: ");
 	Serial.println(_cacheHit);
 	Serial.print("Cache misses: ");
@@ -239,7 +264,6 @@ void BlockDevice::printCacheStats() {
 	Serial.print((_cacheHit * 100) / (_cacheHit + _cacheMiss));
 	Serial.println("%");
 	Serial.println();
-
 	Serial.println("Cache data:");
 	Serial.println("ID     Block  Flags  Count  Time");
 	char temp[80];
@@ -305,17 +329,20 @@ bool BlockDevice::writeRelativeBlock(uint8_t partition, uint32_t block, uint8_t 
 
 bool BlockDevice::loadPartitionTable() {
 	uint8_t buffer[512];
+
 	if (!readBlock(0, buffer)) {
 		errno = EIO;
 		return false;
 	}
 
 	struct mbr *mbr = (struct mbr *)buffer;
-	memcpy(_partitions, mbr->partitions, sizeof(struct partition)*4);
+
+	memcpy(_partitions, mbr->partitions, sizeof(struct partition) * 4);
 
 	if (_partitions[0].lbastart > getCapacity()) {
 		errno = ENODEV;
 		return false;
 	}
+
 	return true;
 }

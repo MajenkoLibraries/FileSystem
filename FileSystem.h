@@ -129,25 +129,25 @@ struct cache {
 class BlockDevice {
 
 private:
-	uint32_t 	_cacheHit;
-	uint32_t	_cacheMiss;
-	uint8_t		_cacheMode;
+	uint32_t _cacheHit;
+	uint32_t _cacheMiss;
+	uint8_t _cacheMode;
 
-	uint8_t		_activityLED;
-	boolean		_haveActivityLED;
+	uint8_t _activityLED;
+	boolean _haveActivityLED;
 
-	uint32_t	findExpirableEntry();
+	uint32_t findExpirableEntry();
 	struct cache _cache[CACHE_SIZE];
 	struct partition _partitions[4];
 
 
 protected:
-	void	switchOnActivityLED();
-	void	switchOffActivityLED();
-	virtual bool	readBlockFromDisk(uint32_t blockno, uint8_t *data) = 0;
-	virtual bool 	writeBlockToDisk(uint32_t block, uint8_t *data) = 0;
+	void switchOnActivityLED();
+	void switchOffActivityLED();
+	virtual bool readBlockFromDisk(uint32_t blockno, uint8_t *data) = 0;
+	virtual bool writeBlockToDisk(uint32_t block, uint8_t *data) = 0;
 	bool loadPartitionTable();
-	
+
 public:
 
 	/*! Read a single block of data.

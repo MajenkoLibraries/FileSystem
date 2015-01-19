@@ -152,12 +152,10 @@ void SDCard::setFastSPI() {
 
 void SDCard::deselectCard() {
 	digitalWrite(_cs, HIGH);
-	switchOffActivityLED();
 }
 
 void SDCard::selectCard() {
 	digitalWrite(_cs, LOW);
-	switchOnActivityLED();
 }
 
 bool SDCard::insert() {
