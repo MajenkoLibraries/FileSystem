@@ -44,8 +44,9 @@
 #define SD_CACHE_SIZE 10
 
 // How fast to run the SPI port
+#ifndef SD_SPI_SPEED
 #define SD_SPI_SPEED 20000000UL
-
+#endif
 
 
 // SD Card Commands

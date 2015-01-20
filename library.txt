@@ -1,0 +1,9 @@
+options.speed.name=SD Card SPI Speed
+options.speed.default=20M
+options.speed.purge=true
+options.speed.10M.name=10MHz
+options.speed.10M.flags=-DSD_SPI_SPEED=10000000UL
+options.speed.15M.name=15MHz
+options.speed.15M.flags=-DSD_SPI_SPEED=15000000UL
+options.speed.20M.name=20MHz
+options.speed.20M.flags=-DSD_SPI_SPEED=20000000UL

@@ -1,3 +1,5 @@
+/** @file */
+
 /*
  * Copyright (c) 2015, Majenko Technologies
  * All rights reserved.
@@ -49,27 +51,15 @@
 
 #include <errno.h>
 
-/*! The CSH structure defines a disk location based on the cylinder,
- * head and sector location.
- */
-struct chs {
-	uint8_t head;
-	struct {
-		unsigned cylhigh: 2;
-		unsigned sector: 6;
-	} __attribute__((packed));
-	uint8_t cyllow;
-} __attribute__((packed));
-
 /*! The partition structure describes the data stored in the
  * partition tablein the MBR.
  */
 struct partition {
 #define P_ACTIVE 0x80
 	uint8_t status;
-	struct chs start;
+	uint8_t start[3];
 	uint8_t type;
-	struct chs end;
+	uint8_t end[3];
 	uint32_t lbastart;
 	uint32_t lbalength;
 };
@@ -94,31 +84,58 @@ struct mbr {
 	uint16_t bootsig;
 } __attribute__((packed));
 
-
-// A cache block has valid data in it
+/** \addtogroup cache Cache System 
+ *  @{
+ */
+ 
+/** @name Flags
+ *  Contents of the `flags` parameter of a cache block.
+ */
+///@{ 
+/*! A cache block has valid data in it */
 #define CACHE_VALID 	0x01
-// A cache block is dirty
+/*! A cache block is dirty */
 #define CACHE_DIRTY 	0x02
-// A cache block is locked in core
+/*! A cache block is locked in core */
 #define CACHE_LOCKED 	0x04
-// A cache block may expire
+/*! A cache block may expire (not currently used) */
 #define CACHE_EXPIRE	0x08
+///@}
 
+/** @name Mode
+ *  Mode to operate the cache system in.
+ */
+///@{ 
+/*! Enable write-back mode (the default) */
 #define CACHE_WRITEBACK 	0x00
+/*! Enable write-through mode */
 #define CACHE_WRITETHROUGH 	0x01
+///@}
 
+
+/*! Number of entries in the cache */
 #define CACHE_SIZE			10
 
-// Maximum directory depth when parsing a path
+/** @} */
+
+/*! Maximum directory depth when parsing a path */
 #define MAX_DEPTH 20
 
+/*! Storage block for a cache entry. */ 
 struct cache {
+	/*! Absolute block number */
 	uint32_t blockno;
+	/*! Last access time in milliseconds */
 	uint32_t last_millis;
+	/*! Number of times block has been hit */
 	uint32_t hit_count;
+	/*! Flags associated with this cache block */
 	uint32_t flags;
+	/*! The actual block data */
 	uint8_t data[512];
 };
+///@}
+
 
 /*!
   * The BlockDevice class is an interface class defining the methods used
@@ -150,11 +167,14 @@ protected:
 
 public:
 
-	/*! Read a single block of data.
+	/*! Read a single block of data.  Block can come from the cache or from
+	 *  the backing store. It's cached if not already in the cache.
 	 */
 	bool readBlock(uint32_t blockno, uint8_t *data);
 
-	/*! Write a single block of data. */
+	/*! Write a single block of data.  It caches the data. If write-through
+	 *  caching is enabled the data is also flushed immediately to the backing store.
+	 */
 	bool writeBlock(uint32_t blockno, uint8_t *data);
 
 	/*! Read a single block of data within a partition.
@@ -165,38 +185,28 @@ public:
 	 */
 	bool writeRelativeBlock(uint8_t partition, uint32_t blockno, uint8_t *data);
 
-	/*! Initialize the device.
-	 *
-	 * Performs any configuration of the device.  Returns a simple true/false
+	/*! Performs any configuration of the device.  Returns a simple true/false
 	 * bool on success or failure.  Sets errno accordingly.
 	 */
 	virtual bool initialize() = 0;
 
-	/*! Eject the medium
-	 *
-	 * On devices that support removable media this command will flush any
+	/*! On devices that support removable media this command will flush any
 	 * buffers or caches and allow the media to be removed cleanly.  Returns
 	 * true/false bool on success or failure.  Sets errno accordingly.
 	 */
 	virtual bool eject() = 0;
 
-	/*! Insert medium
-	 *
-	 * On devices that support removable media this command will re-attach
+	/*! On devices that support removable media this command will re-attach
 	 * and re-initialize the media ready for access.  Returns true/false bool
 	 * on success or failure.  Sets errno accordingly.
 	 */
 	virtual bool insert() = 0;
 
-	/*! Flush any caches
-	 *
-	 * This function flushes any cached data to the block device.
+	/*! This function flushes any cached data to the block device.
 	 */
 	void sync();
 
-	/*! Get capacity in sectors
-	 *
-	 * Returns the number of blocks on the device
+	/*! Returns the number of blocks on the device
 	 */
 	virtual size_t getCapacity() = 0;
 
@@ -216,8 +226,15 @@ public:
 	 */
 	virtual void setCacheMode(uint8_t cacheMode);
 
+	/*! Connect an activity LED into the block device driver. Turns on
+	 *  when a physical block read or write starts, turns off again
+	 *  afterwards.  Just pass a pin number, the driver does the rest.
+	 */
 	void attachActivityLED(uint8_t pin);
 
+	/*! Display some cache statistics - number of hits vs misses, contents
+	 *  of cache, etc.
+	 */
 	virtual void printCacheStats();
 };
 
@@ -230,7 +247,6 @@ class FileSystem;
 
 class File : public Stream {
 private:
-public:
 	uint32_t	_parent;
 	uint32_t	_inode;
 	uint32_t	_position;
@@ -244,8 +260,8 @@ public:
 	int 	read();
 	size_t	readBytes(char *, size_t);
 
-	void 	write(uint8_t c) { }
-	int		available() { return 0; }
+	size_t 	write(uint8_t c) { return 0; }
+	int		available();
 	int		peek() { return 0; }
 	void	flush();
 
@@ -253,7 +269,7 @@ public:
 	// Constructors
 	File(FileSystem *fs, uint32_t parent, uint32_t child, bool);
 	~File();
-
+	uint32_t length() { return _size; }
 };
 
 
@@ -265,8 +281,8 @@ protected:
 public:
 	virtual bool begin() = 0;
 
-	virtual int parsePath(String const &path, char **parts) { return parsePath(path.c_str(), parts); }
-	virtual int parsePath(const char *path, char **parts);
+	virtual int 			parsePath(String const &path, char **parts) { return parsePath(path.c_str(), parts); }
+	virtual int 			parsePath(const char *path, char **parts);
 
 	virtual uint32_t		getInode(const char *path) { return getInode(0, path, NULL); }
 	virtual uint32_t 		getInode(uint32_t parent, const char *path) { return getInode(0, path, NULL); }

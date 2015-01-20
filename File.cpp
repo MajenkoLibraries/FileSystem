@@ -90,3 +90,10 @@ void File::flush() {
 File::operator bool() {
 	return _isValid;
 }
+
+int File::available() {
+	if (_position >= _size) {
+		return -1;
+	}
+	return _size - _position;
+}

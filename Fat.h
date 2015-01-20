@@ -107,14 +107,15 @@ private:
 	uint32_t		_cachedFatNumber;
 	uint8_t			_cachedBlock[512];
 	uint32_t		_cachedBlockNumber;
-	
-public:
+
 	uint32_t 		_root_block;
 	uint32_t		_cluster_size;
 	uint32_t		_data_start;
+
+public:
 	
-	Fat(BlockDevice &dev, uint8_t partition);
-	bool begin();
+					Fat(BlockDevice &dev, uint8_t partition);
+	bool 			begin();
 	uint32_t		getInode(const char *path) { return getInode(0, path, NULL); }
 	uint32_t 		getInode(uint32_t parent, const char *path) { return getInode(0, path, NULL); }
 	uint32_t 		getInode(uint32_t parent, const char *path, uint32_t *ancestor);
