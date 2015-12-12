@@ -258,6 +258,7 @@ bool SDCard::insert() {
 
     _isHighSpeed = false;
 
+    uint8_t status[64];
     selectCard();
     reply = command(CMD_6, 0x80000001);
     if (reply == 0) {
@@ -273,7 +274,6 @@ bool SDCard::insert() {
             }
         }
         if (!fail) {
-            uint8_t status[64];
             for (int i = 0; i < 64; i++) {
                 status[i] = spiReceive();
             }
@@ -315,14 +315,19 @@ bool SDCard::insert() {
     spiReceive();
     deselectCard();
 
-    _transSpeed = buffer[3];
-    _ma = buffer[0] << 8 | buffer[1];
-    _group[0] = buffer[12] << 8 | buffer[13];
-    _group[1] = buffer[10] << 8 | buffer[11];
-    _group[2] = buffer[8] << 8 | buffer[9];
-    _group[3] = buffer[6] << 8 | buffer[7];
-    _group[4] = buffer[4] << 8 | buffer[5];
-    _group[5] = buffer[2] << 8 | buffer[3];
+    if (_isHighSpeed) {
+        _transSpeed = buffer[3];
+        _ma = status[0] << 8 | status[1];
+        _group[0] = status[12] << 8 | status[13];
+        _group[1] = status[10] << 8 | status[11];
+        _group[2] = status[8] << 8 | status[9];
+        _group[3] = status[6] << 8 | status[7];
+        _group[4] = status[4] << 8 | status[5];
+        _group[5] = status[2] << 8 | status[3];
+
+    } else {
+        _transSpeed = SD_SPI_SPEED;
+    }
 
     setFastSPI();
 
