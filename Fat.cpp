@@ -39,38 +39,58 @@ Fat::Fat(BlockDevice &dev, uint8_t partition) {
 	_cachedFatNumber = 0xFFFFFFFFUL;
 	_cachedBlockNumber = 0xFFFFFFFFUL;
 }
+void Fat::dumpBlock(uint8_t *data) {
+    char temp[32];
+    char ascii[32];
+    for (int i = 0; i < _blockSize; i++) {
+        sprintf(temp, "%02x ", data[i]);
+        ascii[i % 16] = (data[i] >= ' ' && data[i] <= 127) ? data[i] : '.';
+        ascii[(i % 16)+1] = 0;
+        Serial.print(temp);
+        if (i % 16 == 15) {
+            Serial.print(" ");
+            Serial.println(ascii);
+        }
+    }
+}
+
 
 bool Fat::begin() {
+    errno = 0;
 	if (!_dev->initialize()) {
 		return false;
 	}
+    _blockSize = _dev->getSectorSize();
 
-	uint8_t buffer[512];
+	uint8_t buffer[_blockSize];
 
 	struct bootblock *bb = (struct bootblock *)buffer;
 
-	if (!_dev->readRelativeBlock(_part, 0, buffer)) {
+	if (!_dev->readRelativeSystemBlock(_part, 0, buffer)) {
 		errno = -10;
 		return false;
 	}
 
-	if (!strncmp((const char *)bb->ident, "FAT16", 5)) {
+	if (!strncmp((const char *)bb->fstype_16, "FAT16", 5)) {
 		_type = 16;
-	} else 	if (!strncmp((const char *)bb->ident, "FAT32", 5)) {
+        _root_block = (bb->fat_copies * bb->sectors_per_fat) + 1;
+        _fat_start = bb->reserved_sectors;
+        _data_start = _root_block + ((bb->root_entries * sizeof(struct fat_dirent)) / _blockSize);
+	} else 	if (!strncmp((const char *)bb->fstype_32, "FAT32", 5)) {
+        _data_start = bb->reserved_sectors + (bb->fat_copies * bb->sectors_per_fat_32);
+        _fat_start = bb->reserved_sectors;
+        _root_block = _data_start;
 		_type = 32;
 	} else {
 		errno = -20; //EINVAL;
 		return false;
 	}
 
-	_root_block = (bb->nfats * bb->fat_size) + 1;
-	_cluster_size = bb->cluster_size;
-	_data_start = _root_block + ((bb->nroot * sizeof(struct fat_dirent)) / 512);
 	return true;
 }
 
 uint32_t Fat::findDirectoryEntry(uint32_t parent, const char *path) {
-	uint8_t block[512];
+	uint8_t block[_blockSize];
 	uint32_t offset = 0;
 
 	if (parent == 0) {
@@ -84,11 +104,11 @@ uint32_t Fat::findDirectoryEntry(uint32_t parent, const char *path) {
 	bool has_lfn = false;
 	bool done = false;
 	while (!done) {
-		if (!_dev->readRelativeBlock(0, offset, block)) {
+		if (!_dev->readRelativeSystemBlock(_part, offset, block)) {
 			return 0;
 		}
 		struct fat_dirent *p = (struct fat_dirent *)block;
-		for (uint32_t i = 0; i < 512 / sizeof(struct fat_dirent); i++) {
+		for (uint32_t i = 0; i < _blockSize / sizeof(struct fat_dirent); i++) {
 			if ((p[i].attribs & ATTR_LFN) == ATTR_LFN) {
 				struct fat_lfnent *as_lfn = (struct fat_lfnent *)block;
 				// Deleted?
@@ -120,6 +140,7 @@ uint32_t Fat::findDirectoryEntry(uint32_t parent, const char *path) {
 				break;
 			}
 
+
 			uint32_t cluster = (p[i].cluster_high << 16) | p[i].cluster_low;
 
 			if (has_lfn) {
@@ -128,6 +149,32 @@ uint32_t Fat::findDirectoryEntry(uint32_t parent, const char *path) {
 				}
 			} else {
 				char fn[12];
+                char ext[4];
+                fn[0] = p[i].filename[0];
+                fn[1] = p[i].filename[1];
+                fn[2] = p[i].filename[2];
+                fn[3] = p[i].filename[3];
+                fn[4] = p[i].filename[4];
+                fn[5] = p[i].filename[5];
+                fn[6] = p[i].filename[6];
+                fn[7] = p[i].filename[7];
+                fn[8] = 0;
+                ext[0] = p[i].filename[8];
+                ext[1] = p[i].filename[9];
+                ext[2] = p[i].filename[10];
+                ext[3] = 0;
+
+                while ((strlen(ext) > 0) && (fn[strlen(ext)-1] == ' ')) {
+                    fn[strlen(ext)-1] = 0;
+                }
+                while ((strlen(fn) > 0) && (fn[strlen(fn)-1] == ' ')) {
+                    fn[strlen(fn)-1] = 0;
+                }
+                if (strlen(ext) > 0) {
+                    strcat(fn, ".");
+                    strcat(fn, ext);
+                }
+
 				if (!strcmp(fn, path)) {
 					return cluster;
 				}
@@ -170,20 +217,23 @@ uint32_t Fat::getNextInode(uint32_t inode) {
 
 	uint32_t inodesPerBlock = 0;
 	if (_type == 32) {
-		inodesPerBlock = 512 / 4;		
+		inodesPerBlock = _blockSize / 4;		
 	} else {
-		inodesPerBlock = 512 / 2;
+		inodesPerBlock = _blockSize / 2;
 	}
 
 	uint32_t block = inode / inodesPerBlock;
 	uint32_t inner = inode % inodesPerBlock;
-	
-	if (_cachedFatNumber != (1+block)) {
-		if (!_dev->readRelativeBlock(_part, 1 + block, _cachedFat)) {
+
+    block += _fat_start;
+
+
+	if (_cachedFatNumber != (block)) {
+		if (!_dev->readRelativeSystemBlock(_part, block, _cachedFat)) {
 			_cachedFatNumber = 0xFFFFFFFFUL;
 			return 0;
 		}
-		_cachedFatNumber = (1+block);
+		_cachedFatNumber = (block);
 	}
 	uint32_t nextInode = 0;
 	if (_type == 32) {
@@ -207,7 +257,7 @@ File Fat::open(const char *filename) {
 }
 
 uint32_t Fat::getInodeSize(uint32_t parent, uint32_t child) {
-	uint8_t block[512];
+	uint8_t block[_blockSize];
 	uint32_t offset = 0;
 	if (parent == 0) {
 		offset = _root_block;
@@ -217,11 +267,11 @@ uint32_t Fat::getInodeSize(uint32_t parent, uint32_t child) {
 
 	bool done = false;
 	while (!done) {
-		if (!_dev->readRelativeBlock(0, offset, block)) {
+		if (!_dev->readRelativeSystemBlock(0, offset, block)) {
 			return 0;
 		}
 		struct fat_dirent *p = (struct fat_dirent *)block;
-		for (uint32_t i = 0; i < 512 / sizeof(struct fat_dirent); i++) {
+		for (uint32_t i = 0; i < _blockSize / sizeof(struct fat_dirent); i++) {
 			if ((p[i].attribs & ATTR_LFN) == ATTR_LFN) {
 				continue;
 			}
@@ -246,10 +296,10 @@ uint32_t Fat::getInodeSize(uint32_t parent, uint32_t child) {
 }
 
 int Fat::readFileByte(uint32_t start, uint32_t offset) {
-	uint32_t clusterNumber = offset / (_cluster_size * 512);
-	uint32_t clusterOffset = offset % (_cluster_size * 512);
-	uint32_t clusterBlock = clusterOffset / 512;
-	uint32_t blockOffset = clusterOffset % 512;
+	uint32_t clusterNumber = offset / (_cluster_size * _blockSize);
+	uint32_t clusterOffset = offset % (_cluster_size * _blockSize);
+	uint32_t clusterBlock = clusterOffset / _blockSize;
+	uint32_t blockOffset = clusterOffset % _blockSize;
 
 	uint32_t inode = start;
 	for (uint32_t i = 0; i < clusterNumber; i++) {
@@ -268,8 +318,8 @@ int Fat::readFileByte(uint32_t start, uint32_t offset) {
 }
 
 int Fat::readClusterByte(uint32_t inode, uint32_t offset) {
-	uint32_t clusterBlock = offset / 512;
-	uint32_t blockOffset = offset % 512;
+	uint32_t clusterBlock = offset / _blockSize;
+	uint32_t blockOffset = offset % _blockSize;
 
 	uint32_t block = (inode - 2) * _cluster_size + clusterBlock + _data_start;
 	if (block != _cachedBlockNumber) {	
@@ -281,15 +331,14 @@ int Fat::readClusterByte(uint32_t inode, uint32_t offset) {
 
 uint32_t Fat::readFileBytes(uint32_t start, uint32_t offset, uint8_t *buffer, uint32_t len) {
 
-
 	uint32_t currentBlock = 0xFFFFFFFFUL;
-	uint8_t data[512];
+	uint8_t data[_blockSize];
 	uint32_t numRead = 0;
 
-	uint32_t clusterNumber = (offset) / (_cluster_size * 512);
-	uint32_t clusterOffset = (offset) % (_cluster_size * 512);
-	uint32_t clusterBlock = clusterOffset / 512;
-	uint32_t blockOffset = clusterOffset % 512;
+	uint32_t clusterNumber = (offset) / (_cluster_size * _blockSize);
+	uint32_t clusterOffset = (offset) % (_cluster_size * _blockSize);
+	uint32_t clusterBlock = clusterOffset / _blockSize;
+	uint32_t blockOffset = clusterOffset % _blockSize;
 	uint32_t relativeBlock = clusterNumber * _cluster_size + clusterBlock;
 
 	uint32_t inode = start;
@@ -300,10 +349,10 @@ uint32_t Fat::readFileBytes(uint32_t start, uint32_t offset, uint8_t *buffer, ui
 	uint32_t currentCluster = clusterNumber;
 
 	for (uint32_t i = 0; i < len; i++) {
-		clusterNumber = (offset + i) / (_cluster_size * 512);
-		clusterOffset = (offset + i) % (_cluster_size * 512);
-		clusterBlock = clusterOffset / 512;
-		blockOffset = clusterOffset % 512;
+		clusterNumber = (offset + i) / (_cluster_size * _blockSize);
+		clusterOffset = (offset + i) % (_cluster_size * _blockSize);
+		clusterBlock = clusterOffset / _blockSize;
+		blockOffset = clusterOffset % _blockSize;
 		relativeBlock = clusterNumber * _cluster_size + clusterBlock;
 		
 		if (currentBlock != relativeBlock) {
@@ -333,8 +382,8 @@ uint32_t Fat::readClusterBytes(uint32_t inode, uint32_t offset, uint8_t *buffer,
 	uint32_t numRead = 0;
 	
 	for (uint32_t i = 0; i < len; i++) {
-		uint32_t clusterBlock = (offset + i) / 512;
-		uint32_t blockOffset = (offset + i) % 512;
+		uint32_t clusterBlock = (offset + i) / _blockSize;
+		uint32_t blockOffset = (offset + i) % _blockSize;
 		
 		if (currentBlock != clusterBlock) {
 			currentBlock = clusterBlock;

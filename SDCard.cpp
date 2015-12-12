@@ -36,6 +36,7 @@ SDCard::SDCard(DSPI &spi, int cs) {
 	_miso = -1;
 	_mosi = -1;
 	_sck = -1;
+    _blockSize = 512;
 }
 
 SDCard::SDCard(int miso, int mosi, int sck, int cs) {
@@ -44,6 +45,7 @@ SDCard::SDCard(int miso, int mosi, int sck, int cs) {
 	_miso = miso;
 	_mosi = mosi;
 	_sck = sck;
+    _blockSize = 512;
 }
 
 void SDCard::initializeSPIInterface() {
@@ -146,7 +148,21 @@ void SDCard::setSlowSPI() {
 
 void SDCard::setFastSPI() {
 	if (_spi != NULL) {
-		_spi->setSpeed(SD_SPI_SPEED); // Todo: Make this a configurable variable
+        switch (_transSpeed) {
+            default:
+            case TRANS_SPEED_25MHZ:
+                _spi->setSpeed(SD_SPI_SPEED); // Todo: Make this a configurable variable
+                break;
+            case TRANS_SPEED_50MHZ:
+                _spi->setSpeed(50000000UL);
+                break;
+            case TRANS_SPEED_100MHZ:
+                _spi->setSpeed(100000000UL);
+                break;
+            case TRANS_SPEED_200MHZ:
+                _spi->setSpeed(200000000UL);
+                break;
+        }
 	}
 }
 
@@ -161,12 +177,14 @@ void SDCard::selectCard() {
 bool SDCard::insert() {
 
 	int reply;
-	uint8_t buffer[512];
+	uint8_t buffer[_blockSize];
 	int timeout = 4;
 	int i, n;
 	uint32_t csize;
 	
 	setSlowSPI();
+
+    initCacheBlocks();
 
 	do {
 		deselectCard();
@@ -186,7 +204,7 @@ bool SDCard::insert() {
 
 	selectCard();
 	reply = command(CMD_SEND_IF_COND, 0x1AA);
-	if (reply * 4) {
+	if (reply & 4) {
 		deselectCard();
 		_cardType = 1;
 	} else {
@@ -238,7 +256,36 @@ bool SDCard::insert() {
     	}
     }
 
-    setFastSPI();
+    _isHighSpeed = false;
+
+    selectCard();
+    reply = command(CMD_6, 0x80000001);
+    if (reply == 0) {
+        bool fail = false;
+        for (int i = 0; ; i++) {
+            reply = spiReceive();
+            if (reply == DATA_START_BLOCK) {
+                break;
+            }
+            if (i >= 5000) {
+                fail = true;
+                break;
+            }
+        }
+        if (!fail) {
+            uint8_t status[64];
+            for (int i = 0; i < 64; i++) {
+                status[i] = spiReceive();
+            }
+            spiReceive();
+            spiReceive();
+
+            if ((status[16] & 0x0f) == 1) {
+                _isHighSpeed = true;
+            }
+        }
+    }
+    deselectCard();
 
 	selectCard();
 	reply = command(CMD_SEND_CSD, 0);
@@ -267,6 +314,17 @@ bool SDCard::insert() {
     spiReceive();
     spiReceive();
     deselectCard();
+
+    _transSpeed = buffer[3];
+    _ma = buffer[0] << 8 | buffer[1];
+    _group[0] = buffer[12] << 8 | buffer[13];
+    _group[1] = buffer[10] << 8 | buffer[11];
+    _group[2] = buffer[8] << 8 | buffer[9];
+    _group[3] = buffer[6] << 8 | buffer[7];
+    _group[4] = buffer[4] << 8 | buffer[5];
+    _group[5] = buffer[2] << 8 | buffer[3];
+
+    setFastSPI();
 
     switch (buffer[0] >> 6) {
     	case 1:
@@ -326,9 +384,9 @@ bool SDCard::readBlockFromDisk(uint32_t block, uint8_t *data) {
 	}
 
 	if (_spi != NULL) {
-		_spi->transfer(512, 0xFF, data);
+		_spi->transfer(_blockSize, 0xFF, data);
 	} else {
-		for (i = 0; i < 512; i++) {
+		for (i = 0; i < _blockSize; i++) {
 			data[i] = spiReceive();
 		}
 	}
@@ -337,7 +395,6 @@ bool SDCard::readBlockFromDisk(uint32_t block, uint8_t *data) {
 
 	command(CMD_STOP, 0);
 	deselectCard();
-	
 	return true;
 }
 
@@ -367,9 +424,9 @@ bool SDCard::writeBlockToDisk(uint32_t block, uint8_t *data) {
 	spiSend(WRITE_MULTIPLE_TOKEN);
 
 	if (_spi != NULL) {
-		_spi->transfer(512, data);
+		_spi->transfer(_blockSize, data);
 	} else {
-		for (i = 0; i < 512; i++) {
+		for (i = 0; i < _blockSize; i++) {
 			spiSend(data[i]);
 		}
 	}

@@ -7,3 +7,15 @@ options.speed.15M.name=15MHz
 options.speed.15M.flags=-DSD_SPI_SPEED=15000000UL
 options.speed.20M.name=20MHz
 options.speed.20M.flags=-DSD_SPI_SPEED=20000000UL
+options.speed.25M.name=25MHz
+options.speed.25M.flags=-DSD_SPI_SPEED=25000000UL
+options.speed.30M.name=30MHz
+options.speed.30M.flags=-DSD_SPI_SPEED=30000000UL
+options.speed.35M.name=35MHz
+options.speed.35M.flags=-DSD_SPI_SPEED=35000000UL
+options.speed.40M.name=40MHz
+options.speed.40M.flags=-DSD_SPI_SPEED=40000000UL
+options.speed.45M.name=45MHz
+options.speed.45M.flags=-DSD_SPI_SPEED=45000000UL
+options.speed.50M.name=50MHz
+options.speed.50M.flags=-DSD_SPI_SPEED=50000000UL

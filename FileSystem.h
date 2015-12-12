@@ -114,7 +114,17 @@ struct mbr {
 
 
 /*! Number of entries in the cache */
-#define CACHE_SIZE			10
+
+
+#if RAMEND < 32768
+# define CACHE_SIZE 1
+#elif RAMEND < 65536
+# define CACHE_SIZE 2
+#elif RAMEND < 131072
+# define CACHE_SIZE 4
+#else
+# define CACHE_SIZE 8
+#endif
 
 /** @} */
 
@@ -132,7 +142,7 @@ struct cache {
 	/*! Flags associated with this cache block */
 	uint32_t flags;
 	/*! The actual block data */
-	uint8_t data[512];
+	uint8_t *data; //[512];
 };
 ///@}
 
@@ -153,9 +163,11 @@ private:
 	uint8_t _activityLED;
 	boolean _haveActivityLED;
 
-	uint32_t findExpirableEntry();
-	struct cache _cache[CACHE_SIZE];
+	uint32_t findExpirableEntry(struct cache *);
+	struct cache _dataCache[CACHE_SIZE];
+	struct cache _systemCache[CACHE_SIZE];
 	struct partition _partitions[4];
+
 
 
 protected:
@@ -164,6 +176,9 @@ protected:
 	virtual bool readBlockFromDisk(uint32_t blockno, uint8_t *data) = 0;
 	virtual bool writeBlockToDisk(uint32_t block, uint8_t *data) = 0;
 	bool loadPartitionTable();
+    void initCacheBlocks();
+
+    size_t _blockSize;
 
 public:
 
@@ -171,19 +186,23 @@ public:
 	 *  the backing store. It's cached if not already in the cache.
 	 */
 	bool readBlock(uint32_t blockno, uint8_t *data);
+	bool readSystemBlock(uint32_t blockno, uint8_t *data);
 
 	/*! Write a single block of data.  It caches the data. If write-through
 	 *  caching is enabled the data is also flushed immediately to the backing store.
 	 */
 	bool writeBlock(uint32_t blockno, uint8_t *data);
+	bool writeSystemBlock(uint32_t blockno, uint8_t *data);
 
 	/*! Read a single block of data within a partition.
 	 */
 	bool readRelativeBlock(uint8_t partition, uint32_t blockno, uint8_t *data);
+	bool readRelativeSystemBlock(uint8_t partition, uint32_t blockno, uint8_t *data);
 
 	/*! Write a single block of data within a partition.
 	 */
 	bool writeRelativeBlock(uint8_t partition, uint32_t blockno, uint8_t *data);
+	bool writeRelativeSystemBlock(uint8_t partition, uint32_t blockno, uint8_t *data);
 
 	/*! Performs any configuration of the device.  Returns a simple true/false
 	 * bool on success or failure.  Sets errno accordingly.
@@ -206,7 +225,7 @@ public:
 	 */
 	void sync();
 
-	/*! Returns the number of blocks on the device
+	/*! Returns the number of sectors on the device
 	 */
 	virtual size_t getCapacity() = 0;
 
@@ -236,6 +255,12 @@ public:
 	 *  of cache, etc.
 	 */
 	virtual void printCacheStats();
+
+    /*! Return the size of one sector - the smallest size that can be
+     *  worked with on the device
+     */
+
+    virtual size_t getSectorSize();
 };
 
 /*! The FileSystem class is an interface class which defines the functions
@@ -265,11 +290,17 @@ public:
 	int		peek() { return 0; }
 	void	flush();
 
+    void seek(uint32_t pos) { _position = pos; }
+
 	operator bool();
+//    File & operator =(const File &other);
+
 	// Constructors
 	File(FileSystem *fs, uint32_t parent, uint32_t child, bool);
+    File() { _isValid = false; };
 	~File();
 	uint32_t length() { return _size; }
+    void close() {}
 };
 
 
@@ -302,6 +333,7 @@ public:
 
 
 #include <SDCard.h>
+#include <SPIFlash.h>
 #include <Fat.h>
 
 #endif

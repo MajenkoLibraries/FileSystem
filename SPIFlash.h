@@ -28,84 +28,45 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+/*! The SPIFlash class implements the BlockDevice interface to provide access to 
+ *  a SPI connected Flash chip.
+ */
+
+#ifndef _SPIFLASH_H
+#define _SPIFLASH_H
+
 #include <FileSystem.h>
+#include <DSPI.h>
 
-File::~File() {
-	flush();
-}
+class SPIFlash : public BlockDevice {
+private:
+	DSPI 		*_spi;
+	int 		_cs;
 
-File::File(FileSystem *fs, uint32_t parent, uint32_t child, bool isValid) {
-	_fs = fs;
-	_parent = parent;
-	_inode = child;	
+    // This is the number of "pages" in the flash.
+	size_t 		_sectors;
+    // The total size is the number of pages multiplied by the size of a page.
 
-	_size = _fs->getInodeSize(_parent, _inode);
-	_position = 0;
-	_posInode = _inode;
-	_isValid = isValid;
-}
+	
+	void 		initializeSPIInterface();
+	void		deselectChip();
+	void		selectChip();
 
-int File::read() {
-	if (_position >= _size) {
-		return -1;
-	}
+	bool		readBlockFromDisk(uint32_t blockno, uint8_t *data);
+	bool		writeBlockToDisk(uint32_t blockno, uint8_t *data);
+	
+	int 		command(uint32_t cmd, uint32_t addr);
 
-	uint32_t cs = _fs->getClusterSize();
-	int c = _fs->readClusterByte(_posInode, _position & cs);
-	_position++;
-	if ((_position % cs) == 0) {
-		_posInode = _fs->getNextInode(_posInode);
-	}
-	return c;
-}
-
-size_t File::readBytes(char *buffer, size_t len) {
-	size_t end = _position + len;
-	if (end > _size) {
-		end = _size;
-	}
-	len = end - _position;
-	uint32_t toRead = len;
-	uint32_t cs = _fs->getClusterSize();
-	uint32_t totalRead = 0;
-	while (toRead > 0) {
-		uint32_t chunkLeft = cs - (_position % cs);
-		uint32_t thisChunk = min(chunkLeft, toRead);
-		uint32_t numRead = _fs->readClusterBytes(_posInode, _position % cs, (uint8_t *)buffer, thisChunk);
+    void        waitReady();
+	
+public:
+				SPIFlash(DSPI &spi, int cs);
 		
-		_position += numRead;
-		if ((_position % cs) == 0) {
-			_posInode = _fs->getNextInode(_posInode);
-		}
-		toRead -= numRead;
-		totalRead += numRead;
-	}
-	return totalRead;
-}
+	bool 		initialize();
+	bool 		eject();
+	bool 		insert();
+	
+	size_t 	getCapacity() { return _sectors; }
+};
 
-void File::flush() { 
-	_fs->sync();
-}
-
-File::operator bool() {
-	return _isValid;
-}
-
-int File::available() {
-	if (_position >= _size) {
-		return -1;
-	}
-	return _size - _position;
-}
-
-#if 0
-File & File::operator =(const File &other) {
-    _parent = other._parent;
-    _inode = other._inode;
-    _position = other._position;
-    _fs = other._fs;
-    _posInode = other._posInode;
-    _isValid = other._isValid;
-    return *this;
-}
 #endif

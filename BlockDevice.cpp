@@ -51,12 +51,25 @@ void BlockDevice::switchOffActivityLED() {
 
 void BlockDevice::sync() {
 	for (int i = 0; i < CACHE_SIZE; i++) {
-		if (_cache[i].flags & CACHE_VALID) {
-			if (_cache[i].flags & CACHE_DIRTY) {
+		if (_dataCache[i].flags & CACHE_VALID) {
+			if (_dataCache[i].flags & CACHE_DIRTY) {
 				switchOnActivityLED();
 
-				if (writeBlockToDisk(_cache[i].blockno, _cache[i].data)) {
-					_cache[i].flags &= ~CACHE_DIRTY;
+				if (writeBlockToDisk(_dataCache[i].blockno, _dataCache[i].data)) {
+					_dataCache[i].flags &= ~CACHE_DIRTY;
+				}
+
+				switchOffActivityLED();
+			}
+		}
+	}
+	for (int i = 0; i < CACHE_SIZE; i++) {
+		if (_systemCache[i].flags & CACHE_VALID) {
+			if (_systemCache[i].flags & CACHE_DIRTY) {
+				switchOnActivityLED();
+
+				if (writeBlockToDisk(_systemCache[i].blockno, _systemCache[i].data)) {
+					_systemCache[i].flags &= ~CACHE_DIRTY;
 				}
 
 				switchOffActivityLED();
@@ -69,11 +82,11 @@ void BlockDevice::sync() {
 bool BlockDevice::readBlock(uint32_t block, uint8_t *data) {
 	// Is it in the cache already?
 	for (int i = 0; i < CACHE_SIZE; i++) {
-		if (_cache[i].flags & CACHE_VALID) {
-			if (_cache[i].blockno == block) {
-				memcpy(data, _cache[i].data, 512);
-				_cache[i].last_millis = millis();
-				_cache[i].hit_count++;
+		if (_dataCache[i].flags & CACHE_VALID) {
+			if (_dataCache[i].blockno == block) {
+				memcpy(data, _dataCache[i].data, _blockSize);
+				_dataCache[i].last_millis = millis();
+				_dataCache[i].hit_count++;
 				_cacheHit++;
 				return true;
 			}
@@ -84,70 +97,132 @@ bool BlockDevice::readBlock(uint32_t block, uint8_t *data) {
 
 	// Find an empty cache slot for the block
 	for (int i = 0; i < CACHE_SIZE; i++) {
-		if (!(_cache[i].flags & CACHE_VALID)) {
+		if (!(_dataCache[i].flags & CACHE_VALID)) {
 			switchOnActivityLED();
 
-			if (!readBlockFromDisk(block, _cache[i].data)) {
+			if (!readBlockFromDisk(block, _dataCache[i].data)) {
 				switchOffActivityLED();
 				return false;
 			}
 
 			switchOffActivityLED();
-			_cache[i].blockno = block;
-			_cache[i].last_millis = millis();
-			_cache[i].flags = CACHE_VALID;
-			_cache[i].hit_count = 0;
-			memcpy(data, _cache[i].data, 512);
+			_dataCache[i].blockno = block;
+			_dataCache[i].last_millis = millis();
+			_dataCache[i].flags = CACHE_VALID;
+			_dataCache[i].hit_count = 0;
+			memcpy(data, _dataCache[i].data, _blockSize);
 			return true;
 		}
 	}
 
 	// No room = let's expire the oldest entry and use that.
-	uint32_t max_entry = findExpirableEntry();
+	uint32_t max_entry = findExpirableEntry(_dataCache);
 
 	// If the found block is dirty then flush it to disk
-	if (_cache[max_entry].flags & CACHE_DIRTY) {
+	if (_dataCache[max_entry].flags & CACHE_DIRTY) {
 		switchOnActivityLED();
-		writeBlockToDisk(_cache[max_entry].blockno, _cache[max_entry].data);
+		writeBlockToDisk(_dataCache[max_entry].blockno, _dataCache[max_entry].data);
 		switchOffActivityLED();
 	}
 
 	switchOnActivityLED();
 
-	if (!readBlockFromDisk(block, _cache[max_entry].data)) {
+	if (!readBlockFromDisk(block, _dataCache[max_entry].data)) {
 		switchOffActivityLED();
 		return false;
 	}
 
 	switchOffActivityLED();
-	_cache[max_entry].blockno = block;
-	_cache[max_entry].last_millis = millis();
-	_cache[max_entry].flags = CACHE_VALID;
-	_cache[max_entry].hit_count = 0;
-	memcpy(data, _cache[max_entry].data, 512);
+	_dataCache[max_entry].blockno = block;
+	_dataCache[max_entry].last_millis = millis();
+	_dataCache[max_entry].flags = CACHE_VALID;
+	_dataCache[max_entry].hit_count = 0;
+	memcpy(data, _dataCache[max_entry].data, _blockSize);
+	return true;
+}
+
+bool BlockDevice::readSystemBlock(uint32_t block, uint8_t *data) {
+	// Is it in the cache already?
+	for (int i = 0; i < CACHE_SIZE; i++) {
+		if (_dataCache[i].flags & CACHE_VALID) {
+			if (_systemCache[i].blockno == block) {
+				memcpy(data, _systemCache[i].data, _blockSize);
+				_systemCache[i].last_millis = millis();
+				_systemCache[i].hit_count++;
+				_cacheHit++;
+				return true;
+			}
+		}
+	}
+
+	_cacheMiss++;
+
+	// Find an empty cache slot for the block
+	for (int i = 0; i < CACHE_SIZE; i++) {
+		if (!(_systemCache[i].flags & CACHE_VALID)) {
+			switchOnActivityLED();
+
+			if (!readBlockFromDisk(block, _systemCache[i].data)) {
+				switchOffActivityLED();
+				return false;
+			}
+
+			switchOffActivityLED();
+			_systemCache[i].blockno = block;
+			_systemCache[i].last_millis = millis();
+			_systemCache[i].flags = CACHE_VALID;
+			_systemCache[i].hit_count = 0;
+			memcpy(data, _systemCache[i].data, _blockSize);
+			return true;
+		}
+	}
+
+	// No room = let's expire the oldest entry and use that.
+	uint32_t max_entry = findExpirableEntry(_systemCache);
+
+	// If the found block is dirty then flush it to disk
+	if (_systemCache[max_entry].flags & CACHE_DIRTY) {
+		switchOnActivityLED();
+		writeBlockToDisk(_systemCache[max_entry].blockno, _systemCache[max_entry].data);
+		switchOffActivityLED();
+	}
+
+	switchOnActivityLED();
+
+	if (!readBlockFromDisk(block, _systemCache[max_entry].data)) {
+		switchOffActivityLED();
+		return false;
+	}
+
+	switchOffActivityLED();
+	_systemCache[max_entry].blockno = block;
+	_systemCache[max_entry].last_millis = millis();
+	_systemCache[max_entry].flags = CACHE_VALID;
+	_systemCache[max_entry].hit_count = 0;
+	memcpy(data, _systemCache[max_entry].data, _blockSize);
 	return true;
 }
 
 bool BlockDevice::writeBlock(uint32_t block, uint8_t *data) {
 	// First let's look for the block in the cache
 	for (int i = 0; i < CACHE_SIZE; i++) {
-		if (_cache[i].flags & CACHE_VALID) {
-			if (_cache[i].blockno == block) {
-				memcpy(_cache[i].data, data, 512);
-				_cache[i].flags |= CACHE_DIRTY;
-				_cache[i].last_millis = millis();
-				_cache[i].hit_count++;
+		if (_dataCache[i].flags & CACHE_VALID) {
+			if (_dataCache[i].blockno == block) {
+				memcpy(_dataCache[i].data, data, _blockSize);
+				_dataCache[i].flags |= CACHE_DIRTY;
+				_dataCache[i].last_millis = millis();
+				_dataCache[i].hit_count++;
 
 				if (_cacheMode == CACHE_WRITETHROUGH) {
 					switchOnActivityLED();
 
-					if (!writeBlockToDisk(_cache[i].blockno, _cache[i].data)) {
+					if (!writeBlockToDisk(_dataCache[i].blockno, _dataCache[i].data)) {
 						switchOffActivityLED();
 						return false;
 					}
 
 					switchOffActivityLED();
-					_cache[i].flags &= ~CACHE_DIRTY;
+					_dataCache[i].flags &= ~CACHE_DIRTY;
 				}
 
 				_cacheHit++;
@@ -160,54 +235,139 @@ bool BlockDevice::writeBlock(uint32_t block, uint8_t *data) {
 
 	// Not found in the cache, so let's find room for it
 	for (int i = 0; i < CACHE_SIZE; i++) {
-		if (!(_cache[i].flags & CACHE_VALID)) {
-			_cache[i].blockno = block;
-			_cache[i].flags = CACHE_VALID | CACHE_DIRTY;
-			_cache[i].last_millis = millis();
-			_cache[i].hit_count = 0;
-			memcpy(_cache[i].data, data, 512);
+		if (!(_dataCache[i].flags & CACHE_VALID)) {
+			_dataCache[i].blockno = block;
+			_dataCache[i].flags = CACHE_VALID | CACHE_DIRTY;
+			_dataCache[i].last_millis = millis();
+			_dataCache[i].hit_count = 0;
+			memcpy(_dataCache[i].data, data, _blockSize);
 
 			if (_cacheMode == CACHE_WRITETHROUGH) {
 				switchOnActivityLED();
 
-				if (!writeBlockToDisk(_cache[i].blockno, _cache[i].data)) {
+				if (!writeBlockToDisk(_dataCache[i].blockno, _dataCache[i].data)) {
 					switchOffActivityLED();
 					return false;
 				}
 
 				switchOffActivityLED();
-				_cache[i].flags &= ~CACHE_DIRTY;
+				_dataCache[i].flags &= ~CACHE_DIRTY;
 			}
 
 			return true;
 		}
 	}
 
-	uint32_t max_entry = findExpirableEntry();
+	uint32_t max_entry = findExpirableEntry(_dataCache);
 
 	// If the found block is dirty then flush it to disk
-	if (_cache[max_entry].flags & CACHE_DIRTY) {
+	if (_dataCache[max_entry].flags & CACHE_DIRTY) {
 		switchOnActivityLED();
-		writeBlockToDisk(_cache[max_entry].blockno, _cache[max_entry].data);
+		writeBlockToDisk(_dataCache[max_entry].blockno, _dataCache[max_entry].data);
 		switchOffActivityLED();
 	}
 
-	_cache[max_entry].blockno = block;
-	_cache[max_entry].last_millis = millis();
-	_cache[max_entry].flags = CACHE_VALID | CACHE_DIRTY;
-	_cache[max_entry].hit_count = 0;
-	memcpy(_cache[max_entry].data, data, 512);
+	_dataCache[max_entry].blockno = block;
+	_dataCache[max_entry].last_millis = millis();
+	_dataCache[max_entry].flags = CACHE_VALID | CACHE_DIRTY;
+	_dataCache[max_entry].hit_count = 0;
+	memcpy(_dataCache[max_entry].data, data, _blockSize);
 
 	if (_cacheMode == CACHE_WRITETHROUGH) {
 		switchOnActivityLED();
 
-		if (!writeBlockToDisk(_cache[max_entry].blockno, _cache[max_entry].data)) {
+		if (!writeBlockToDisk(_dataCache[max_entry].blockno, _dataCache[max_entry].data)) {
 			switchOffActivityLED();
 			return false;
 		}
 
 		switchOffActivityLED();
-		_cache[max_entry].flags &= ~CACHE_DIRTY;
+		_dataCache[max_entry].flags &= ~CACHE_DIRTY;
+	}
+
+	return true;
+}
+
+bool BlockDevice::writeSystemBlock(uint32_t block, uint8_t *data) {
+	// First let's look for the block in the cache
+	for (int i = 0; i < CACHE_SIZE; i++) {
+		if (_systemCache[i].flags & CACHE_VALID) {
+			if (_systemCache[i].blockno == block) {
+				memcpy(_systemCache[i].data, data, _blockSize);
+				_systemCache[i].flags |= CACHE_DIRTY;
+				_systemCache[i].last_millis = millis();
+				_systemCache[i].hit_count++;
+
+				if (_cacheMode == CACHE_WRITETHROUGH) {
+					switchOnActivityLED();
+
+					if (!writeBlockToDisk(_systemCache[i].blockno, _systemCache[i].data)) {
+						switchOffActivityLED();
+						return false;
+					}
+
+					switchOffActivityLED();
+					_systemCache[i].flags &= ~CACHE_DIRTY;
+				}
+
+				_cacheHit++;
+				return true;
+			}
+		}
+	}
+
+	_cacheMiss++;
+
+	// Not found in the cache, so let's find room for it
+	for (int i = 0; i < CACHE_SIZE; i++) {
+		if (!(_systemCache[i].flags & CACHE_VALID)) {
+			_systemCache[i].blockno = block;
+			_systemCache[i].flags = CACHE_VALID | CACHE_DIRTY;
+			_systemCache[i].last_millis = millis();
+			_systemCache[i].hit_count = 0;
+			memcpy(_systemCache[i].data, data, _blockSize);
+
+			if (_cacheMode == CACHE_WRITETHROUGH) {
+				switchOnActivityLED();
+
+				if (!writeBlockToDisk(_systemCache[i].blockno, _systemCache[i].data)) {
+					switchOffActivityLED();
+					return false;
+				}
+
+				switchOffActivityLED();
+				_systemCache[i].flags &= ~CACHE_DIRTY;
+			}
+
+			return true;
+		}
+	}
+
+	uint32_t max_entry = findExpirableEntry(_systemCache);
+
+	// If the found block is dirty then flush it to disk
+	if (_systemCache[max_entry].flags & CACHE_DIRTY) {
+		switchOnActivityLED();
+		writeBlockToDisk(_systemCache[max_entry].blockno, _systemCache[max_entry].data);
+		switchOffActivityLED();
+	}
+
+	_systemCache[max_entry].blockno = block;
+	_systemCache[max_entry].last_millis = millis();
+	_systemCache[max_entry].flags = CACHE_VALID | CACHE_DIRTY;
+	_systemCache[max_entry].hit_count = 0;
+	memcpy(_systemCache[max_entry].data, data, _blockSize);
+
+	if (_cacheMode == CACHE_WRITETHROUGH) {
+		switchOnActivityLED();
+
+		if (!writeBlockToDisk(_systemCache[max_entry].blockno, _systemCache[max_entry].data)) {
+			switchOffActivityLED();
+			return false;
+		}
+
+		switchOffActivityLED();
+		_systemCache[max_entry].flags &= ~CACHE_DIRTY;
 	}
 
 	return true;
@@ -222,36 +382,30 @@ void BlockDevice::setCacheMode(uint8_t mode) {
 }
 
 
-uint32_t BlockDevice::findExpirableEntry() {
+uint32_t BlockDevice::findExpirableEntry(struct cache *cache) {
 	uint32_t leastUsedCount = 0xFFFFFFFFUL;
 	uint32_t oldestUsedTime = 0;
 	uint32_t oldestUsedID = 0;
 
 	// First scan through and find the least used count.
-	for (int i = 0; i < SD_CACHE_SIZE; i++) {
-		if (_cache[i].hit_count < leastUsedCount) {
-			leastUsedCount = _cache[i].hit_count;
+	for (int i = 0; i < CACHE_SIZE; i++) {
+		if (cache[i].hit_count < leastUsedCount) {
+			leastUsedCount = cache[i].hit_count;
 		}
 	}
 
 	uint32_t now = millis();
 
 	// Now scan through and find the one with that count that is oldest.
-	for (int i = 0; i < SD_CACHE_SIZE; i++) {
-		if (_cache[i].hit_count == leastUsedCount) {
-			if (now - _cache[i].last_millis > oldestUsedTime) {
-				oldestUsedTime = now - _cache[i].last_millis;
+	for (int i = 0; i < CACHE_SIZE; i++) {
+		if (cache[i].hit_count == leastUsedCount) {
+			if (now - cache[i].last_millis > oldestUsedTime) {
+				oldestUsedTime = now - cache[i].last_millis;
 				oldestUsedID = i;
 			}
 		}
 	}
 
-//	Serial.print("Expiring entry ");
-//	Serial.print(oldestUsedID);
-//	Serial.print(" with use count ");
-//	Serial.print(leastUsedCount);
-//	Serial.print(" and time difference ");
-//	Serial.println(oldestUsedTime);
 	return oldestUsedID;
 }
 
@@ -264,28 +418,55 @@ void BlockDevice::printCacheStats() {
 	Serial.print((_cacheHit * 100) / (_cacheHit + _cacheMiss));
 	Serial.println("%");
 	Serial.println();
-	Serial.println("Cache data:");
+	Serial.println("Data cache:");
 	Serial.println("ID     Block  Flags  Count  Time");
 	char temp[80];
 	uint32_t max_hit = 0;
 
-	for (int i = 0; i < SD_CACHE_SIZE; i++) {
-		if (_cache[i].hit_count > max_hit) {
-			max_hit = _cache[i].hit_count;
+	for (int i = 0; i < CACHE_SIZE; i++) {
+		if (_dataCache[i].hit_count > max_hit) {
+			max_hit = _dataCache[i].hit_count;
 		}
 	}
 
 	uint32_t now = millis();
 
 	for (int hit = max_hit; hit >= 0; hit--) {
-		for (int i = 0; i < SD_CACHE_SIZE; i++) {
-			if (_cache[i].hit_count == (uint32_t)hit) {
+		for (int i = 0; i < CACHE_SIZE; i++) {
+			if (_dataCache[i].hit_count == (uint32_t)hit) {
 				sprintf(temp, "%2d  %8lu  %02x     %5lu  %lu",
 				        i,
-				        _cache[i].blockno,
-				        (unsigned int)_cache[i].flags,
-				        _cache[i].hit_count,
-				        (now - _cache[i].last_millis)
+				        _dataCache[i].blockno,
+				        (unsigned int)_dataCache[i].flags,
+				        _dataCache[i].hit_count,
+				        (now - _dataCache[i].last_millis)
+				       );
+				Serial.println(temp);
+			}
+		}
+	}
+	Serial.println();
+	Serial.println("System cache:");
+	Serial.println("ID     Block  Flags  Count  Time");
+	max_hit = 0;
+
+	for (int i = 0; i < CACHE_SIZE; i++) {
+		if (_systemCache[i].hit_count > max_hit) {
+			max_hit = _systemCache[i].hit_count;
+		}
+	}
+
+	now = millis();
+
+	for (int hit = max_hit; hit >= 0; hit--) {
+		for (int i = 0; i < CACHE_SIZE; i++) {
+			if (_systemCache[i].hit_count == (uint32_t)hit) {
+				sprintf(temp, "%2d  %8lu  %02x     %5lu  %lu",
+				        i,
+				        _systemCache[i].blockno,
+				        (unsigned int)_systemCache[i].flags,
+				        _systemCache[i].hit_count,
+				        (now - _systemCache[i].last_millis)
 				       );
 				Serial.println(temp);
 			}
@@ -310,6 +491,23 @@ bool BlockDevice::readRelativeBlock(uint8_t partition, uint32_t block, uint8_t *
 	return readBlock(offset + block, data);
 }
 
+bool BlockDevice::readRelativeSystemBlock(uint8_t partition, uint32_t block, uint8_t *data) {
+	uint32_t offset = _partitions[partition & 0x03].lbastart;
+	uint32_t size = _partitions[partition & 0x03].lbalength;
+
+	if (offset > getCapacity()) {
+		errno = EINVAL;
+		return false;
+	}
+
+	if (block > size) {
+		errno = EINVAL;
+		return false;
+	}
+
+	return readSystemBlock(offset + block, data);
+}
+
 bool BlockDevice::writeRelativeBlock(uint8_t partition, uint32_t block, uint8_t *data) {
 	uint8_t offset = _partitions[partition & 0x03].lbastart;
 	uint8_t size = _partitions[partition & 0x03].lbalength;
@@ -327,10 +525,27 @@ bool BlockDevice::writeRelativeBlock(uint8_t partition, uint32_t block, uint8_t 
 	return writeBlock(offset + block, data);
 }
 
-bool BlockDevice::loadPartitionTable() {
-	uint8_t buffer[512];
+bool BlockDevice::writeRelativeSystemBlock(uint8_t partition, uint32_t block, uint8_t *data) {
+	uint8_t offset = _partitions[partition & 0x03].lbastart;
+	uint8_t size = _partitions[partition & 0x03].lbalength;
 
-	if (!readBlock(0, buffer)) {
+	if (offset > getCapacity()) {
+		errno = EINVAL;
+		return false;
+	}
+
+	if (block > size) {
+		errno = EINVAL;
+		return false;
+	}
+
+	return writeSystemBlock(offset + block, data);
+}
+
+bool BlockDevice::loadPartitionTable() {
+	uint8_t buffer[_blockSize];
+
+	if (!readSystemBlock(0, buffer)) {
 		errno = EIO;
 		return false;
 	}
@@ -343,6 +558,20 @@ bool BlockDevice::loadPartitionTable() {
 		errno = ENODEV;
 		return false;
 	}
-
 	return true;
+}
+
+size_t BlockDevice::getSectorSize() {
+    return _blockSize;
+}
+
+void BlockDevice::initCacheBlocks() {
+    for (int i = 0; i < CACHE_SIZE; i++) {
+        if (_dataCache[i].data == NULL) {
+            _dataCache[i].data = (uint8_t *)malloc(_blockSize);
+        }
+        if (_systemCache[i].data == NULL) {
+            _systemCache[i].data = (uint8_t *)malloc(_blockSize);
+        }
+    }
 }

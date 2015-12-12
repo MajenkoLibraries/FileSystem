@@ -38,11 +38,6 @@
 #include <FileSystem.h>
 #include <DSPI.h>
 
-// Number of entries in the cache
-// Minimum 1 (reeeeealy slow) - Maximum depends on memory of chip.
-// Each entry is 528 bytes in size
-#define SD_CACHE_SIZE 10
-
 // How fast to run the SPI port
 #ifndef SD_SPI_SPEED
 #define SD_SPI_SPEED 20000000UL
@@ -53,6 +48,7 @@
 
 #define CMD_GO_IDLE             0       /* CMD0 */
 #define CMD_SEND_OP_MMC         1       /* CMD1 (MMC) */
+#define CMD_6                   6
 #define CMD_SEND_IF_COND        8
 #define CMD_SEND_CSD            9
 #define CMD_SEND_CID            10
@@ -85,6 +81,10 @@
 #define STOP_TRAN_TOKEN         0xFD    /* stop token for write multiple */
 #define WRITE_MULTIPLE_TOKEN    0xFC    /* start data for write multiple */
 
+#define TRANS_SPEED_25MHZ   0x32
+#define TRANS_SPEED_50MHZ   0x5a
+#define TRANS_SPEED_100MHZ  0x0b
+#define TRANS_SPEED_200MHZ  0x2b
 
 class SDCard : public BlockDevice {
 private:
@@ -96,6 +96,11 @@ private:
 
 	int			_cardType;
 	size_t 		_sectors;
+
+    bool        _isHighSpeed;
+    uint8_t     _transSpeed;
+    uint32_t    _ma;
+    uint32_t    _group[6];
 
 	
 	

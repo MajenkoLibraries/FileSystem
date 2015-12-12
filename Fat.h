@@ -74,25 +74,52 @@ struct fat_lfnent{
 struct bootblock {
 	uint8_t bs_start[3];
 	uint8_t mfg_desc[8];
-	uint16_t blocksize;
-	uint8_t cluster_size;
-	uint16_t reserved;
-	uint8_t nfats;
-	uint16_t nroot;
-	uint16_t size_small;
-	uint8_t descriptor;
-	uint16_t fat_size;
-	uint16_t bpt;
-	uint16_t heads;
-	uint32_t hidden;
-	uint32_t size_big;
-	uint16_t drive;
-	uint8_t ext_sig;
-	uint32_t serial;
-	uint8_t label[11];
-	uint8_t ident[8];
-	uint8_t bs_prog[0x1c0];
-	uint16_t signature;
+    uint16_t bytes_per_sector;
+    uint8_t sectors_per_cluster;
+    uint16_t reserved_sectors;
+    uint8_t fat_copies;
+    uint16_t root_entries;
+    uint16_t total_sectors;
+    uint8_t media_descriptor;
+    uint16_t sectors_per_fat;
+    uint16_t sectors_per_track;
+    uint16_t heads;
+    union {
+        struct {
+            uint16_t hidden_sectors_12;
+            uint8_t bootstrap_12[480];
+        } __attribute__((packed));
+        struct {
+            uint32_t hidden_sectors_16;
+            uint32_t total_sectors_16;
+            uint8_t logical_drive_16;
+            uint8_t reserved_16;
+            uint8_t extended_signature_16;
+            uint32_t serial_number_16;
+            char label_16[11];
+            char fstype_16[8];
+            uint8_t bootstrap_16[448];
+        } __attribute__((packed));
+        struct {
+            uint32_t hidden_sectors_32;
+            uint32_t total_sectors_32;
+            uint32_t sectors_per_fat_32;
+            uint16_t mirror_flags_32;
+            uint16_t fs_version_32;
+            uint32_t root_start_32;
+            uint16_t fs_info_sector_32;
+            uint16_t backup_boot_32;
+            uint8_t reserved_32[12];
+            uint8_t logical_drive_32;
+            uint8_t reserved2_32;
+            uint8_t extended_signature_32;
+            uint32_t serial_number_32;
+            uint8_t label_32[11];
+            uint8_t fstype_32[8];
+            uint8_t bootstrap_32[420];
+        } __attribute__((packed));
+    } __attribute__((packed));
+    uint16_t signature;
 } __attribute__((packed));
 
 class Fat : public FileSystem {
@@ -110,7 +137,10 @@ private:
 
 	uint32_t 		_root_block;
 	uint32_t		_cluster_size;
+    uint32_t        _bytes_per_sector;
 	uint32_t		_data_start;
+    uint32_t        _fat_start;
+    uint32_t        _blockSize;
 
 public:
 	
@@ -130,7 +160,9 @@ public:
 	uint32_t		readFileBytes(uint32_t start, uint32_t offset, uint8_t *buffer, uint32_t len);
 	uint32_t		readClusterBytes(uint32_t start, uint32_t offset, uint8_t *buffer, uint32_t len);
 
-	uint32_t		getClusterSize() { return _cluster_size * 512; }
+	uint32_t		getClusterSize() { return _cluster_size * _bytes_per_sector; }
+
+    void dumpBlock(uint8_t *block);
 };
 
 #endif
