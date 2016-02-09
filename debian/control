@@ -2,6 +2,7 @@ Source: libfilesystem-chipkit
 Section: libraries
 Priority: extra
 XBSC-Group: Storage
+XBSC-Subgroup: SD and MMC
 XBSC-Family: pic32
 Maintainer: Matt Jenkins <matt@majenko.co.uk>
 Build-Depends: debhelper (>= 8.0.0)
